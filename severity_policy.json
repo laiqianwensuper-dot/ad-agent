@@ -1,0 +1,51 @@
+{
+  "meta": {
+    "name": "Prototype Severity Policy",
+    "version": "1.0",
+    "important_notice": "This severity mapping is an implementation policy for the prototype. It is NOT part of the original candidate assignment rules.",
+    "severity_enum": [
+      "HIGH",
+      "MEDIUM",
+      "LOW"
+    ],
+    "evidence_state_enum": [
+      "CONFIRMED",
+      "UNCERTAIN"
+    ]
+  },
+  "default_by_rule": {
+    "A-01": "MEDIUM",
+    "A-02": "MEDIUM",
+    "A-03": "MEDIUM",
+    "A-04": "MEDIUM",
+    "A-05": "HIGH",
+    "A-06": "HIGH",
+    "A-07": "MEDIUM",
+    "A-08": "MEDIUM",
+    "A-09": "MEDIUM",
+    "A-10": null
+  },
+  "overrides": [
+    {
+      "when": "A-07 contains direct denigration of a named competitor or broad unsupported superiority claim with strong wording",
+      "severity": "HIGH",
+      "note": "Prototype escalation rule."
+    },
+    {
+      "when": "A-01 absolute claim is central/headline-level and strongly categorical (e.g. unique/100%/No.1) with no support",
+      "severity": "HIGH",
+      "note": "Prototype escalation rule."
+    }
+  ],
+  "uncertainty_policy": {
+    "rule": "UNCERTAIN is an evidence state, not a risk severity.",
+    "behavior": "When the system lacks sufficient evidence, set rule status to UNCERTAIN and do not invent HIGH/MEDIUM/LOW.",
+    "overall": "If there is no confirmed RISK but at least one material UNCERTAIN item, overall_status must be UNCERTAIN."
+  },
+  "human_review": {
+    "A-06": "always when RISK",
+    "A-09": "when authenticity or authorization cannot be verified",
+    "A-10": "request better evidence or human review",
+    "validator_failure": "always after the single retry also fails"
+  }
+}
