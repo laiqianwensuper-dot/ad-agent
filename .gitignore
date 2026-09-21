@@ -1,0 +1,10 @@
+node_modules/
+.next/
+.npm-cache/
+.tmp/
+*.log
+tsconfig.tsbuildinfo
+.env.local
+coverage/
+AGENTS.md
+CLAUDE.md

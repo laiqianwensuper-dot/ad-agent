@@ -133,12 +133,27 @@
         "确定性效果保证"
       ],
       "required_information": [
-        "若作效果主张，应存在可验证依据"
+        "若作效果主张，应在同一审核单元内存在可识别的验证依据，例如测试条件、样本或统计口径、报告编号、来源或授权信息"
       ],
       "decision_policy": {
-        "RISK": "存在未经验证的健康、美容、性能或收益效果承诺。",
-        "PASS": "未发现此类承诺，或当前材料中具有可识别且足以支持该效果主张的依据。",
-        "UNCERTAIN": "效果表述或验证依据不完整，无法确认。"
+        "RISK": "存在明确的健康、美容、性能或收益效果主张，但当前审核单元未发现可识别的验证依据。",
+        "PASS": "仅为品牌、情绪、生活方式或抽象表达，未构成效果主张；或当前审核单元内具有可识别且足以支持该效果主张的依据。",
+        "UNCERTAIN": "效果主张或其验证依据位于模糊、遮挡、裁切区域，无法确认。"
+      },
+      "effect_claim_policy": {
+        "scope": [
+          "health",
+          "beauty",
+          "performance",
+          "income"
+        ],
+        "not_effect_claim": [
+          "品牌定位",
+          "情绪表达",
+          "生活方式表达",
+          "抽象 slogan"
+        ],
+        "evidence_scope": "在同一 Content Unit 的文案与全部配图中查找依据；仅判断材料是否可识别，不验证外部材料真实性。"
       },
       "evidence_requirement": {
         "must_quote_original_text": true,
@@ -164,6 +179,10 @@
         "PASS": "未发现此类敏感表达。",
         "UNCERTAIN": "疑似敏感表达但文字无法准确识别。"
       },
+      "approved_sensitive_variants": [
+        "根治", "包治", "药到病除", "绝无副作用", "无任何副作用",
+        "无风险", "风险为零", "保证稳赚", "保本稳赚", "只赚不赔"
+      ],
       "evidence_requirement": {
         "must_quote_original_text": true,
         "evidence_must_exist_in_canonical_content": true
@@ -210,8 +229,8 @@
       ],
       "decision_policy": {
         "RISK": "宣称免费/零元，同时存在必要费用但未显著披露。",
-        "PASS": "不存在免费/零元主张，或存在必要费用时已显著披露。",
-        "UNCERTAIN": "无法确认是否存在押金、运费、自动续费等必要费用或相关披露区域不完整。"
+        "PASS": "不存在免费/零元主张；或存在必要费用时已显著披露；或当前材料没有任何必要费用线索。",
+        "UNCERTAIN": "当前材料明确提及费用或披露区域，但因模糊、遮挡或裁切无法确认其是否显著。"
       },
       "evidence_requirement": {
         "must_quote_original_text": true,

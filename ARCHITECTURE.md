@@ -277,6 +277,8 @@ interface ImageTextExtractor {
 - 无 RISK 但有 UNCERTAIN → overall = UNCERTAIN
 - 全部 PASS → overall = PASS
 
+补充：已确认的任意 `RISK` 与其他规则的 `UNCERTAIN` 并存时，overall = `RISK`，并在用户界面同时解释无法确认项；不能让局部不确定掩盖已确认风险。
+
 ### 10.5 Repair
 Validator fail：
 - 构造机器可读错误列表；
@@ -304,6 +306,10 @@ Validator fail：
 
 README 中必须注明：
 “风险等级是本 Prototype 的实现策略，不是题目原始规则。”
+
+### 11.1 A-06 mandatory intercept
+
+A-06 使用受控词库，而不是交给模型自由扩展。“治疗、治愈、根治、包治、药到病除、无副作用、绝无副作用、无任何副作用、零风险、无风险、风险为零、稳赚、保证稳赚、保本稳赚、只赚不赔”命中后由代码强制设为 `RISK + HIGH + needHumanReview=true`。普通效果承诺和夸张语仍按 A-01/A-05 处理。
 
 ---
 

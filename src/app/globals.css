@@ -1,0 +1,39 @@
+@import "tailwindcss";
+
+:root {
+  --primary: #3370ff;
+  --primary-hover: #245bdb;
+  --accent: #00b8a9;
+  --bg: #f5f6f7;
+  --app-bg: #f5f7fa;
+  --sidebar-bg: #f7f8fa;
+  --surface: #ffffff;
+  --text-primary: #1f2329;
+  --text-secondary: #646a73;
+  --text-tertiary: #8f959e;
+  --border: #dee0e3;
+  --hover-bg: #f2f3f5;
+  --active-bg: #e8f3ff;
+  --danger: #f54a45;
+  --warning: #ff8800;
+  --success: #34c724;
+  --ink: var(--text-primary);
+  --muted: var(--text-secondary);
+  --line: var(--border);
+  --paper: var(--bg);
+  --mint: #e6faf7;
+  --mint-deep: var(--accent);
+  --amber: #fff4df;
+  --red: var(--danger);
+  --navy: var(--primary);
+}
+
+* { box-sizing: border-box; }
+html { background: var(--paper); }
+body { margin: 0; color: var(--ink); background: var(--paper); font-family: Arial, "Microsoft YaHei", sans-serif; font-size: 14px; }
+button, input, textarea { font: inherit; }
+button { cursor: pointer; }
+.error-page { max-width: 560px; margin: 18vh auto; padding: 32px; }
+.error-page h1 { font-size: 28px; margin: 8px 0; }
+.error-page button { background: var(--navy); color: white; border: 0; padding: 10px 16px; border-radius: 8px; }
+.eyebrow { color: var(--mint-deep); font-size: 13px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }

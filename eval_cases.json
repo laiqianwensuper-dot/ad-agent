@@ -177,13 +177,11 @@
       "id": "E015",
       "type": "text",
       "input": "0元领取，点击即得。",
-      "expected_overall": "UNCERTAIN",
+      "expected_overall": "PASS",
       "expected_risk_rules": [],
-      "expected_uncertain_rules": [
-        "A-08"
-      ],
+      "expected_uncertain_rules": [],
       "human_review": false,
-      "purpose": "cannot infer hidden fee; should not fabricate"
+      "purpose": "no fee clue; should not fabricate a hidden fee"
     },
     {
       "id": "E016",
@@ -317,6 +315,38 @@
       "expected_uncertain_rules": [],
       "human_review": false,
       "purpose": "subjective praise should not automatically equal absolute claim"
+    },
+    {
+      "id": "E027",
+      "type": "text",
+      "input": "发现更好的自己。",
+      "expected_overall": "PASS",
+      "expected_risk_rules": [],
+      "expected_uncertain_rules": [],
+      "human_review": false,
+      "purpose": "abstract brand slogan is not an A-05 effect claim"
+    },
+    {
+      "id": "E028",
+      "type": "text",
+      "input": "焕亮肤色，令肌肤水润细腻。",
+      "expected_overall": "RISK",
+      "expected_risk_rules": [
+        "A-05"
+      ],
+      "expected_uncertain_rules": [],
+      "human_review": false,
+      "purpose": "beauty effect claims require material-level evidence"
+    },
+    {
+      "id": "E029",
+      "type": "text",
+      "input": "7天改善暗沉。测试报告：BR-2026-018；受试者样本及测试条件见报告摘要。",
+      "expected_overall": "PASS",
+      "expected_risk_rules": [],
+      "expected_uncertain_rules": [],
+      "human_review": false,
+      "purpose": "effect claim with identifiable in-material evidence"
     },
     {
       "id": "I001",
