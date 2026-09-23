@@ -24,9 +24,20 @@ export type IssueFeedback = {
 };
 export type HumanDecision =
   "PENDING" | "APPROVED" | "CONFIRMED_NEEDS_CHANGES" | "FALSE_POSITIVE" | null;
-export type HumanReview = {
-  decision: HumanDecision;
+export type ResolvedHumanDecision = Exclude<HumanDecision, "PENDING" | null>;
+export type HumanReviewIssue = {
+  issueKey: string;
+  label: string;
+  ruleIds: string[];
+};
+export type HumanIssueReview = {
+  issueKey: string;
+  decision: ResolvedHumanDecision;
   note: string | null;
+  updatedAt: string;
+};
+export type HumanReview = {
+  issueReviews: HumanIssueReview[];
   issueFeedback: IssueFeedback[];
   updatedAt: string | null;
 };
@@ -79,11 +90,63 @@ function createId() {
 }
 
 export function requiresHumanReview(review: ReviewPresentation) {
-  return review.ruleResults.some(
-    (result) =>
-      (result.ruleId === "A-06" && result.status === "RISK") ||
-      (result.ruleId === "A-09" && result.status === "UNCERTAIN"),
+  return review.needHumanReview;
+}
+
+export function humanReviewIssues(review: ReviewPresentation): HumanReviewIssue[] {
+  const issues: HumanReviewIssue[] = [];
+  const isSafeFallback =
+    review.needHumanReview &&
+    review.ruleResults.every(
+      (result) => result.status === "UNCERTAIN" && result.evidence.length === 0,
+    );
+  if (isSafeFallback) {
+    return [
+      {
+        issueKey: "human:system-fallback",
+        label: "系统审核结果待人工确认",
+        ruleIds: [],
+      },
+    ];
+  }
+  const sensitive = review.ruleResults.find(
+    (result) => result.ruleId === "A-06" && result.status === "RISK",
   );
+  if (sensitive) {
+    issues.push({
+      issueKey: "human:A-06",
+      label: "A-06 敏感词需人工复核",
+      ruleIds: ["A-06"],
+    });
+  }
+  const endorsement = review.ruleResults.find(
+    (result) => result.ruleId === "A-09" && result.status === "UNCERTAIN",
+  );
+  if (endorsement) {
+    issues.push({
+      issueKey: "human:A-09",
+      label: "A-09 背书真实性或授权待确认",
+      ruleIds: ["A-09"],
+    });
+  }
+
+  // A failed validation/model retry does not map to one business rule, but it
+  // must still have a visible, resolvable queue item.
+  if (review.needHumanReview && issues.length === 0) {
+    issues.push({
+      issueKey: "human:system-fallback",
+      label: "系统审核结果待人工确认",
+      ruleIds: [],
+    });
+  }
+  return issues;
+}
+
+export function isHumanIssueResolved(
+  humanReview: HumanReview,
+  issueKey: string,
+) {
+  return humanReview.issueReviews.some((item) => item.issueKey === issueKey);
 }
 
 function initialHumanReview(
@@ -91,15 +154,64 @@ function initialHumanReview(
   legacyState?: LegacyStoredReviewTask["humanReviewState"],
 ): HumanReview {
   return {
-    decision:
+    issueReviews:
       legacyState === "RESOLVED"
-        ? "CONFIRMED_NEEDS_CHANGES"
-        : requiresHumanReview(review)
-          ? "PENDING"
-          : null,
-    note: null,
+        ? humanReviewIssues(review).map((issue) => ({
+            issueKey: issue.issueKey,
+            decision: "CONFIRMED_NEEDS_CHANGES" as const,
+            note: null,
+            updatedAt: new Date().toISOString(),
+          }))
+        : [],
     issueFeedback: [],
     updatedAt: null,
+  };
+}
+
+function normalizeHumanReview(
+  review: ReviewPresentation,
+  raw: unknown,
+): HumanReview {
+  if (!raw || typeof raw !== "object") return initialHumanReview(review);
+  const candidate = raw as Partial<HumanReview> & {
+    decision?: HumanDecision;
+    note?: string | null;
+  };
+  const issueReviews = Array.isArray(candidate.issueReviews)
+    ? candidate.issueReviews.filter(
+        (item): item is HumanIssueReview =>
+          Boolean(
+            item &&
+              typeof item === "object" &&
+              "issueKey" in item &&
+              "decision" in item,
+          ),
+      )
+    : [];
+
+  // v2 stored one decision for the entire material. Preserve it only when
+  // there was exactly one human issue; otherwise do not silently resolve
+  // unrelated issues.
+  if (
+    issueReviews.length === 0 &&
+    candidate.decision &&
+    candidate.decision !== "PENDING" &&
+    humanReviewIssues(review).length === 1
+  ) {
+    const [issue] = humanReviewIssues(review);
+    issueReviews.push({
+      issueKey: issue.issueKey,
+      decision: candidate.decision,
+      note: candidate.note ?? null,
+      updatedAt: candidate.updatedAt ?? new Date().toISOString(),
+    });
+  }
+  return {
+    issueReviews,
+    issueFeedback: Array.isArray(candidate.issueFeedback)
+      ? candidate.issueFeedback
+      : [],
+    updatedAt: candidate.updatedAt ?? null,
   };
 }
 
@@ -138,7 +250,17 @@ export function loadStoredTasks(): StoredReviewTask[] {
     const current: unknown = JSON.parse(
       window.localStorage.getItem(storageKey) ?? "[]",
     );
-    if (Array.isArray(current) && current.every(isCurrentTask)) return current;
+    if (Array.isArray(current) && current.every(isCurrentTask)) {
+      const normalized = current.map((task) => ({
+        ...task,
+        contentItems: task.contentItems.map((item) => ({
+          ...item,
+          humanReview: normalizeHumanReview(item.review, item.humanReview),
+        })),
+      }));
+      saveStoredTasks(normalized);
+      return normalized;
+    }
     const legacy: unknown = JSON.parse(
       window.localStorage.getItem(legacyStorageKey) ?? "[]",
     );
@@ -193,10 +315,7 @@ export function contentItemStatusLabel(item: StoredContentItem) {
 }
 
 export function needsHumanHandling(item: StoredContentItem) {
-  // A recorded human outcome closes the queue item without rewriting the
-  // immutable AI pre-review result.
-  if (item.humanReview.decision && item.humanReview.decision !== "PENDING") {
-    return false;
-  }
-  return requiresHumanReview(item.review);
+  return humanReviewIssues(item.review).some(
+    (issue) => !isHumanIssueResolved(item.humanReview, issue.issueKey),
+  );
 }

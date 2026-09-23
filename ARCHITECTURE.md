@@ -272,6 +272,8 @@ interface ImageTextExtractor {
 
 ### 10.4 Business Invariants
 - A-06 == RISK → `needHumanReview=true`
+- A-09 == UNCERTAIN → `needHumanReview=true`
+- A-10 == UNCERTAIN → 补充确认，不自动进入人工复核
 - A-10 == RISK/UNCERTAIN → overall 不能为 PASS
 - 任意 rule == RISK → overall 至少为 RISK
 - 无 RISK 但有 UNCERTAIN → overall = UNCERTAIN
@@ -297,12 +299,15 @@ Validator fail：
 
 风险等级策略不属于题目原始规则，必须从 `severity_policy.json` 读取。
 
-优先采用确定性映射；LLM 只能在策略允许的可变条件内选择。
+优先采用确定性映射；LLM 只识别规则与证据，服务端根据已匹配 evidence 决定等级。
 
 例如：
-- A-05/A-06 默认 HIGH；
-- A-02/A-03/A-04/A-08 默认 MEDIUM；
-- A-10 不分高/中/低，它表示 Evidence State = UNCERTAIN。
+- A-01/A-02/A-03/A-04/A-05/A-07/A-08 与已确认的 A-09 默认 MEDIUM；
+- A-06 默认 HIGH；
+- A-05 仅在保证、明确时限结果、量化确定结果或“100%有效”时升级为 HIGH；
+- A-09/A-10 的 UNCERTAIN 不分高/中/低，它表示 Evidence State = UNCERTAIN。
+
+`status`、`severity` 与 `needHumanReview` 分别回答“是否确认有问题”“确认问题的处理优先级”和“是否必须由人判断”，不能互相推导。
 
 README 中必须注明：
 “风险等级是本 Prototype 的实现策略，不是题目原始规则。”
@@ -446,7 +451,7 @@ src/
   data/
     rules.json
     severity_policy.json
-    eval_cases.json
+    scripts/run-eval.mjs        # 接收显式 Eval 根目录，不内置个人电脑路径
 tests/
   validator.test.ts
   rule-coverage.test.ts

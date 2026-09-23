@@ -18,7 +18,7 @@
     "A-02": "MEDIUM",
     "A-03": "MEDIUM",
     "A-04": "MEDIUM",
-    "A-05": "HIGH",
+    "A-05": "MEDIUM",
     "A-06": "HIGH",
     "A-07": "MEDIUM",
     "A-08": "MEDIUM",
@@ -27,14 +27,9 @@
   },
   "overrides": [
     {
-      "when": "A-07 contains direct denigration of a named competitor or broad unsupported superiority claim with strong wording",
+      "when": "A-05 evidence contains a guarantee, explicit time-to-result, quantified result, or 100% effective claim",
       "severity": "HIGH",
-      "note": "Prototype escalation rule."
-    },
-    {
-      "when": "A-01 absolute claim is central/headline-level and strongly categorical (e.g. unique/100%/No.1) with no support",
-      "severity": "HIGH",
-      "note": "Prototype escalation rule."
+      "note": "Prototype escalation rule. The server applies this deterministically from the matched evidence."
     }
   ],
   "uncertainty_policy": {

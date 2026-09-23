@@ -9,7 +9,7 @@
 3. `rules.json`：A-01~A-10 业务规则 Source of Truth。不要让 Codex 擅自改规则。
 4. `severity_policy.json`：Prototype 风险等级策略。它不是原题规则，必须和 rules 分开。
 5. `output_schema.json`：Agent 内部/最终输出的 JSON Schema。
-6. `eval_cases.json`：32 个初始评估用例（文本 + image fixture specification）。
+6. 外部 `AdGuard_Eval_Set_V1/adguard_eval_v1/expected_results.json`：当前唯一的 36 条评估标准；通过 `npm run eval -- <eval-root>` 显式运行。
 7. `CODEX_TASK.md`：完整开发任务书和完成标准。
 8. `PROMPT_TO_CODEX.md`：你真正复制到 Codex 对话框里的启动提示词。
 9. `.env.example`：环境变量示例，不包含真实 API Key。

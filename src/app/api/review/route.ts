@@ -3,11 +3,15 @@ import { parseImage, ReviewServiceError } from "@/lib/agent/openai-reviewer";
 import { runReviewWorkflow } from "@/lib/agent/workflow";
 import { toReviewApiResponse } from "@/lib/api-contract";
 import type { CanonicalContent, ErrorResult } from "@/lib/schemas/review";
+import {
+  MAX_REVIEW_IMAGE_BYTES,
+  MAX_REVIEW_IMAGE_LABEL,
+  imageBytes,
+} from "@/lib/upload-policy";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-const MAX_FILE_SIZE = 10 * 1024 * 1024;
 const MAX_TEXT_LENGTH = 12_000;
 const MAX_IMAGES_PER_TASK = 5;
 const supportedMimeTypes = new Set(["image/png", "image/jpeg", "image/webp"]);
@@ -56,7 +60,11 @@ export async function POST(request: Request) {
     if (!text && images.length === 0) return error("EMPTY_INPUT", "请填写广告文案或上传至少一张图片。");
     if (text.length > MAX_TEXT_LENGTH) return error("TEXT_TOO_LONG", `文案不能超过 ${MAX_TEXT_LENGTH} 个字符。`);
     if (images.length > MAX_IMAGES_PER_TASK) return error("TOO_MANY_IMAGES", `单个审核任务最多上传 ${MAX_IMAGES_PER_TASK} 张图片。`);
-    if (images.some((image) => image.size > MAX_FILE_SIZE)) return error("FILE_TOO_LARGE", "单张图片不能超过 10MB。");
+    if (imageBytes(images) > MAX_REVIEW_IMAGE_BYTES)
+      return error(
+        "PAYLOAD_TOO_LARGE",
+        `单个内容项的配图总大小不能超过 ${MAX_REVIEW_IMAGE_LABEL}。`,
+      );
     if (images.some((image) => !supportedMimeTypes.has(image.type))) return error("UNSUPPORTED_FILE_TYPE", "仅支持 PNG、JPG/JPEG、WEBP 图片。");
 
     let canonical: CanonicalContent;

@@ -9,7 +9,7 @@
 - `rules.json`
 - `severity_policy.json`
 - `output_schema.json`
-- `eval_cases.json`
+- 外部 `AdGuard_Eval_Set_V1/adguard_eval_v1/expected_results.json`（运行时显式传入）
 - `CODEX_TASK.md`
 
 其中 `rules.json` 是业务规则 Source of Truth。**不要自行增加、删除、扩展或用外部广告法替换 A-01~A-10，也不要让大模型依靠常识自由判断。**

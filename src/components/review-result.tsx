@@ -2,13 +2,13 @@
 
 import Image from "next/image";
 import { useMemo, useState } from "react";
-import { ReviewAssistantDrawer } from "@/components/review-assistant-drawer";
 import type {
   FeedbackReason,
   HumanDecision,
   HumanReview,
   ReviewPresentation,
 } from "@/lib/review-task-store";
+import { getRule } from "@/lib/rules/registry";
 import type { RuleResult } from "@/lib/schemas/review";
 
 type ImageAsset = { url: string; name: string };
@@ -30,30 +30,6 @@ const feedbackOptions: { id: FeedbackReason; label: string }[] = [
   { id: "SUGGESTION_NOT_USEFUL", label: "修改建议不合理" },
   { id: "OTHER", label: "其他" },
 ];
-
-function statusCopy(
-  status: ReviewPresentation["overallStatus"],
-  issueCount: number,
-  uncertainCount: number,
-) {
-  if (status === "PASS")
-    return {
-      title: "当前未发现明确风险",
-      detail: "当前素材未发现题目规则定义的明确风险。",
-      tone: "pass",
-    };
-  if (status === "UNCERTAIN")
-    return {
-      title: "待补充确认",
-      detail: `有 ${uncertainCount} 项内容因素材信息不足无法确认。`,
-      tone: "uncertain",
-    };
-  return {
-    title: "建议修改后发布",
-    detail: `发现 ${issueCount} 处需要修改的问题。完成修改后，请基于最终版本重新审核。`,
-    tone: "risk",
-  };
-}
 
 function groupFindings(results: RuleResult[]): Finding[] {
   const grouped = new Map<string, Omit<Finding, "marker">>();
@@ -133,25 +109,19 @@ function groupFindings(results: RuleResult[]): Finding[] {
   });
 }
 
-function severityLabel(finding: Finding) {
-  return finding.results.some((item) => item.severity === "HIGH")
-    ? "高风险"
-    : finding.results.some((item) => item.severity === "MEDIUM")
-      ? "中风险"
-      : "低风险";
-}
-
-// The structured result remains the source of the rule decision. This small
-// presentation helper only makes repeated A-05 advice actionable when one
-// rule result contains several separate phrases on the same material.
-function contextualSuggestion(finding: Finding, fallback: string) {
-  const rules = new Set(finding.results.map((item) => item.ruleId));
+function contextualSuggestion(
+  ruleIds: string[],
+  evidence: string[],
+  fallback: string,
+) {
+  const rules = new Set(ruleIds);
+  const quote = evidence.join("；");
   if (!rules.has("A-05")) return fallback;
-  if (/温和\s*有效/.test(finding.quote))
+  if (/温和\s*有效/.test(quote))
     return "“有效”属于明确效果主张；没有验证材料时可保留“温和”，改为“温和呵护肌肤”。";
-  if (/(焕亮|水润|细腻|透光|光泽)/.test(finding.quote))
+  if (/(焕亮|水润|细腻|透光|光泽)/.test(quote))
     return "没有对应测试或报告时，可改为偏感受或视觉风格的表达，例如“打造透亮光泽感”，避免承诺具体功效结果。";
-  if (/(改善|修护|提亮|淡斑|祛痘|去痘)/.test(finding.quote))
+  if (/(改善|修护|提亮|淡斑|祛痘|去痘)/.test(quote))
     return "如无可识别的测试依据，删除确定性的改善或修护结果；如保留该主张，请补充当前素材内可识别的测试条件或报告信息。";
   return fallback;
 }
@@ -164,136 +134,351 @@ function humanDecisionLabel(decision: HumanDecision) {
   return "未处理";
 }
 
-function requiresHumanReview(result: RuleResult) {
+function ruleNeedsHumanReview(result: RuleResult) {
   return (
     (result.ruleId === "A-06" && result.status === "RISK") ||
     (result.ruleId === "A-09" && result.status === "UNCERTAIN")
   );
 }
 
-function ResultGroup({
-  title,
-  count,
-  tone,
-  defaultOpen = false,
-  children,
-}: {
+type IssueTab = "MODIFY" | "SUPPLEMENT" | "HUMAN" | "HISTORY";
+type IssueRow = {
+  id: string;
   title: string;
-  count: number;
-  tone: "risk" | "supplement" | "human";
-  defaultOpen?: boolean;
-  children: React.ReactNode;
-}) {
-  const marker =
-    tone === "risk"
-      ? "bg-[#fff0ed] text-[#b83b34]"
-      : tone === "supplement"
-        ? "bg-[#fff7e6] text-[#a55f00]"
-        : "bg-[#eef3ff] text-[var(--primary)]";
-  return (
-    <details
-      open={defaultOpen}
-      className="mt-4 overflow-hidden rounded-lg border border-[var(--border)] bg-white"
-    >
-      <summary className="flex cursor-pointer list-none items-center justify-between px-4 py-3 hover:bg-[#fafbfc]">
-        <span className="font-semibold">{title}</span>
-        <span className={`rounded px-2 py-1 text-xs font-medium ${marker}`}>
-          {count}
-        </span>
-      </summary>
-      <div className="border-t border-[var(--border)]">{children}</div>
-    </details>
-  );
+  quote: string;
+  evidence: string[];
+  type: string;
+  ruleIds: string[];
+  severity: string | null;
+  reason: string;
+  suggestion: string | null;
+  missingInformation: string[];
+  finding: Finding | null;
+  findingIndex: number | null;
+  human: boolean;
+  humanIssueKey?: string;
+};
+
+function severityLabel(results: RuleResult[]) {
+  return results.some((item) => item.severity === "HIGH")
+    ? "高风险"
+    : results.some((item) => item.severity === "MEDIUM")
+      ? "中风险"
+      : "低风险";
 }
 
-function FindingRow({
-  finding,
-  index,
-  selected,
-  onSelect,
-  onFeedback,
-  onCopy,
-}: {
-  finding: Finding;
-  index: number;
-  selected: boolean;
-  onSelect: () => void;
-  onFeedback: () => void;
-  onCopy: (text: string) => void;
-}) {
-  const names = [...new Set(finding.results.map((item) => item.ruleName))];
-  const ids = [...new Set(finding.results.map((item) => item.ruleId))];
-  const reason = [...new Set(finding.results.map((item) => item.reason))].join(
-    "；",
+function issueFromRiskRule(
+  result: RuleResult,
+  findings: Finding[],
+): IssueRow {
+  const evidence = [...new Set(result.evidence)];
+  const findingIndex = findings.findIndex((finding) =>
+    finding.results.some((candidate) => candidate.ruleId === result.ruleId),
   );
-  const baseSuggestion = [
+  const finding = findingIndex >= 0 ? findings[findingIndex] : null;
+  const suggestion = [
     ...new Set(
-      finding.results
+      [result]
         .map((item) => item.suggestion)
         .filter((item): item is string => Boolean(item)),
     ),
   ].join("；");
-  const suggestion = baseSuggestion
-    ? contextualSuggestion(finding, baseSuggestion)
-    : "";
+  return {
+    id: `risk:${result.ruleId}`,
+    title: `${result.ruleName}${evidence.length > 1 ? `（${evidence.length}处）` : ""}`,
+    quote: evidence.length === 1 ? evidence[0] : `${evidence[0] ?? result.ruleName} 等 ${evidence.length} 处`,
+    evidence,
+    type: result.ruleName,
+    ruleIds: [result.ruleId],
+    severity: severityLabel([result]),
+    reason: result.reason,
+    suggestion: suggestion
+      ? contextualSuggestion([result.ruleId], evidence, suggestion)
+      : null,
+    missingInformation: [],
+    finding,
+    findingIndex: findingIndex >= 0 ? findingIndex : null,
+    human: ruleNeedsHumanReview(result),
+    humanIssueKey: result.ruleId === "A-06" ? "human:A-06" : undefined,
+  };
+}
+
+function issueFromUncertain(result: RuleResult): IssueRow {
+  const human = ruleNeedsHumanReview(result);
+  return {
+    id: `uncertain-${result.ruleId}`,
+    title: result.ruleName,
+    quote: result.evidence.join("；") || result.ruleName,
+    evidence: result.evidence,
+    type: result.ruleName,
+    ruleIds: [result.ruleId],
+    severity: null,
+    reason: result.reason,
+    suggestion: result.suggestion,
+    missingInformation: result.missingInformation,
+    finding: null,
+    findingIndex: null,
+    human,
+    humanIssueKey: human ? "human:A-09" : undefined,
+  };
+}
+
+function mergeSameEvidenceIssues(rows: IssueRow[]): IssueRow[] {
+  const merged = new Map<string, IssueRow>();
+  for (const row of rows) {
+    const evidenceKey = [...row.evidence].sort().join("\u0001");
+    const key = evidenceKey || row.id;
+    const existing = merged.get(key);
+    if (!existing) {
+      merged.set(key, row);
+      continue;
+    }
+    existing.ruleIds = [...new Set([...existing.ruleIds, ...row.ruleIds])];
+    existing.type = [...new Set([existing.type, row.type])].join(" · ");
+    existing.title = existing.type;
+    existing.severity =
+      existing.severity === "高风险" || row.severity === "高风险"
+        ? "高风险"
+        : "中风险";
+    existing.reason = [...new Set([existing.reason, row.reason])].join("；");
+    existing.suggestion = [existing.suggestion, row.suggestion]
+      .filter((item): item is string => Boolean(item))
+      .join("；");
+  }
+  return [...merged.values()];
+}
+
+function fallbackHumanIssue(): IssueRow {
+  return {
+    id: "human:system-fallback",
+    title: "系统审核结果待人工确认",
+    quote: "审核服务未能形成可验证结论",
+    evidence: [],
+    type: "系统结果确认",
+    ruleIds: [],
+    severity: null,
+    reason: "模型服务或结果校验在重试后仍未完成，系统未将素材误判为通过，需人工确认后续处理。",
+    suggestion: "请核对素材与审核服务状态；必要时重新发起审核。",
+    missingInformation: ["可验证的审核结果"],
+    finding: null,
+    findingIndex: null,
+    human: true,
+    humanIssueKey: "human:system-fallback",
+  };
+}
+
+function IssueTable({
+  rows,
+  onOpen,
+}: {
+  rows: IssueRow[];
+  onOpen: (row: IssueRow) => void;
+}) {
+  if (!rows.length) {
+    return (
+      <div className="px-4 py-10 text-center text-sm text-[var(--text-secondary)]">
+        当前没有此类问题。
+      </div>
+    );
+  }
   return (
-    <article
-      onClick={onSelect}
-      className={`cursor-pointer px-4 py-4 transition ${selected ? "bg-[#f7faff]" : "hover:bg-[#fbfcfe]"}`}
+    <div className="overflow-x-auto">
+      <table className="min-w-[620px] w-full text-left text-sm">
+        <thead className="border-b border-[var(--border)] bg-[#fafbfc] text-xs text-[var(--text-tertiary)]">
+          <tr>
+            <th className="w-12 px-4 py-3 font-medium">#</th>
+            <th className="min-w-44 px-3 py-3 font-medium">风险问题</th>
+            <th className="px-3 py-3 font-medium">关联规则</th>
+            <th className="px-3 py-3 font-medium">等级</th>
+            <th className="min-w-52 px-4 py-3 font-medium">问题说明</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, index) => (
+            <tr
+              key={row.id}
+              onClick={() => onOpen(row)}
+              className="cursor-pointer border-b border-[var(--border)] transition hover:bg-[#f7faff]"
+            >
+              <td className="px-4 py-3.5 text-[var(--text-tertiary)]">
+                {index + 1}
+              </td>
+              <td className="max-w-56 truncate px-3 py-3.5 font-medium">
+                {row.title}
+                <p className="mt-1 truncate text-xs font-normal text-[var(--text-tertiary)]">
+                  {row.quote}
+                </p>
+              </td>
+              <td className="px-3 py-3.5 text-[var(--text-secondary)]">
+                {row.ruleIds.join(" / ")}
+              </td>
+              <td className="px-3 py-3.5">
+                {row.severity ? (
+                  <span className="rounded bg-[#fff0ed] px-2 py-1 text-xs font-medium text-[#b83b34]">
+                    {row.severity}
+                  </span>
+                ) : (
+                  <span className="text-[var(--text-tertiary)]">—</span>
+                )}
+              </td>
+              <td className="max-w-72 truncate px-4 py-3.5 text-[var(--text-secondary)]">
+                {row.reason}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function IssueDrawer({
+  row,
+  onClose,
+  onFeedback,
+  onCopy,
+  onHumanUpdate,
+}: {
+  row: IssueRow;
+  onClose: () => void;
+  onFeedback: () => void;
+  onCopy: (text: string) => void;
+  onHumanUpdate?: (decision: HumanDecision) => void;
+}) {
+  const ruleDescription = row.ruleIds
+    .map(
+      (ruleId) =>
+        `${ruleId} ${getRule(ruleId as RuleResult["ruleId"]).source_requirement}`,
+    )
+    .join("；");
+  return (
+    <div
+      className="fixed inset-0 z-40 flex justify-end bg-[#1f2329]/20"
+      onClick={onClose}
     >
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className="font-semibold">
-            {finding.marker ? `${index + 1}. ` : ""}“{finding.quote}”
-          </p>
-          <p className="mt-1.5 text-sm text-[var(--text-secondary)]">
-            {names.join(" · ")}{" "}
-            <span className="ml-1 text-xs text-[var(--text-tertiary)]">
-              {ids.join(" · ")}
-            </span>
-          </p>
+      <aside
+        role="dialog"
+        aria-modal="true"
+        aria-label="问题详情"
+        onClick={(event) => event.stopPropagation()}
+        className="h-full w-full max-w-[440px] overflow-y-auto border-l border-[var(--border)] bg-white shadow-2xl"
+      >
+        <div className="flex items-center justify-between border-b border-[var(--border)] px-5 py-4">
+          <h2 className="text-lg font-semibold">
+            {row.human ? "人工复核" : "问题详情"}
+          </h2>
+          <button
+            type="button"
+            onClick={onClose}
+            className="p-1 text-[var(--text-secondary)]"
+            aria-label="关闭"
+          >
+            ×
+          </button>
         </div>
-        <span className="shrink-0 rounded bg-[#fff0ed] px-2 py-1 text-xs font-semibold text-[#a13b31]">
-          {severityLabel(finding)}
-        </span>
-      </div>
-      {suggestion && (
-        <div className="mt-3 border-l-2 border-[var(--accent)] pl-3 text-sm leading-6 text-[#1f5a53]">
-          <span className="font-semibold">建议修改：</span>
-          {suggestion}
+        <div className="space-y-6 p-5">
+          <div>
+            <p className="text-base font-semibold leading-7">{row.title}</p>
+            {row.evidence.length > 0 && (
+              <div className="mt-3 rounded-md bg-[#f8fafc] p-3 text-sm leading-6 text-[var(--text-secondary)]">
+                <p className="mb-1 text-xs font-medium text-[var(--text-tertiary)]">
+                  涉及表述
+                </p>
+                {row.evidence.map((quote) => (
+                  <p key={quote}>“{quote}”</p>
+                ))}
+              </div>
+            )}
+            <div className="mt-3 flex flex-wrap gap-2 text-xs">
+              <span className="rounded bg-[#f3f5f8] px-2 py-1 text-[var(--text-secondary)]">
+                {row.type}
+              </span>
+              <span className="rounded bg-[#f3f5f8] px-2 py-1 text-[var(--text-secondary)]">
+                {row.ruleIds.join(" / ")}
+              </span>
+              {row.severity && (
+                <span className="rounded bg-[#fff0ed] px-2 py-1 text-[#b83b34]">
+                  {row.severity}
+                </span>
+              )}
+            </div>
+          </div>
+          <section>
+            <h3 className="text-sm font-semibold">
+              {row.human ? "为什么需要人工确认" : "问题说明"}
+            </h3>
+            <p className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">
+              {row.reason}
+            </p>
+          </section>
+          {row.missingInformation.length > 0 && (
+            <section className="border-t border-[var(--border)] pt-5">
+              <h3 className="text-sm font-semibold">建议补充</h3>
+              <p className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">
+                {row.missingInformation.join("、")}
+              </p>
+            </section>
+          )}
+          {row.suggestion && (
+            <section className="border-t border-[var(--border)] pt-5">
+              <h3 className="text-sm font-semibold">修改建议</h3>
+              <p className="mt-2 rounded-md bg-[#f8fafc] p-3 text-sm leading-6 text-[var(--text-secondary)]">
+                {row.suggestion}
+              </p>
+              <button
+                type="button"
+                onClick={() => onCopy(row.suggestion!)}
+                className="mt-3 text-sm font-medium text-[var(--primary)]"
+              >
+                复制建议
+              </button>
+            </section>
+          )}
+          <section className="border-t border-[var(--border)] pt-5">
+            <h3 className="text-sm font-semibold">审核依据</h3>
+            <p className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">
+              {ruleDescription}
+            </p>
+          </section>
+          {row.human && onHumanUpdate ? (
+            <section className="border-t border-[var(--border)] pt-5">
+              <h3 className="text-sm font-semibold">人工处理</h3>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => onHumanUpdate("CONFIRMED_NEEDS_CHANGES")}
+                  className="rounded-md border border-[#f5c4a8] px-3 py-2 text-sm font-medium text-[#b54708]"
+                >
+                  确认需修改
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onFeedback()}
+                  className="rounded-md border border-[#b8ccff] px-3 py-2 text-sm font-medium text-[var(--primary)]"
+                >
+                  标记误判
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onHumanUpdate("APPROVED")}
+                  className="rounded-md border border-[#98d4b5] px-3 py-2 text-sm font-medium text-[#18794e]"
+                >
+                  审核通过
+                </button>
+              </div>
+            </section>
+          ) : (
+            <button
+              type="button"
+              onClick={onFeedback}
+              className="border-t border-[var(--border)] pt-5 text-sm font-medium text-[var(--primary)]"
+            >
+              标记误判
+            </button>
+          )}
         </div>
-      )}
-      <div className="mt-3 flex items-center gap-3">
-        <button
-          type="button"
-          onClick={(event) => {
-            event.stopPropagation();
-            if (suggestion) onCopy(suggestion);
-          }}
-          disabled={!suggestion}
-          className="text-xs font-medium text-[var(--primary)] disabled:text-[var(--text-tertiary)]"
-        >
-          复制建议
-        </button>
-        <button
-          type="button"
-          onClick={(event) => {
-            event.stopPropagation();
-            onFeedback();
-          }}
-          className="text-xs font-medium text-[var(--primary)]"
-        >
-          标记误判
-        </button>
-        <details
-          onClick={(event) => event.stopPropagation()}
-          className="text-xs text-[var(--text-tertiary)]"
-        >
-          <summary className="cursor-pointer">查看依据</summary>
-          <p className="mt-2 max-w-2xl leading-5">{reason}</p>
-        </details>
-      </div>
-    </article>
+      </aside>
+    </div>
   );
 }
 
@@ -307,7 +492,8 @@ export function ReviewResultView({
   images: ImageAsset[];
   humanReview?: HumanReview;
   onHumanUpdate?: (input: {
-    decision: HumanDecision;
+    issueKey?: string;
+    decision?: HumanDecision;
     note?: string;
     feedback?: { findingKey: string; reason: FeedbackReason; note: string };
   }) => void;
@@ -319,83 +505,47 @@ export function ReviewResultView({
   const uncertain = review.ruleResults.filter(
     (item) => item.status === "UNCERTAIN",
   );
-  const humanFindings = findings.filter((finding) =>
-    finding.results.some(requiresHumanReview),
+  const issueRows = mergeSameEvidenceIssues(
+    review.ruleResults
+      .filter((result) => result.status === "RISK")
+      .map((result) => issueFromRiskRule(result, findings)),
   );
-  const modificationFindings = findings.filter(
-    (finding) => !finding.results.some(requiresHumanReview),
-  );
-  const humanUncertain = uncertain.filter(requiresHumanReview);
-  const supplementUncertain = uncertain.filter(
-    (result) => !requiresHumanReview(result),
-  );
-  const summary = statusCopy(
-    review.overallStatus,
-    findings.length,
-    uncertain.length,
-  );
+  const modificationRows = issueRows.filter((row) => !row.human);
+  const ruleHumanRows = [
+    ...issueRows.filter((row) => row.human),
+    ...uncertain.filter(ruleNeedsHumanReview).map(issueFromUncertain),
+  ];
+  const humanRows =
+    review.needHumanReview && ruleHumanRows.length === 0
+      ? [fallbackHumanIssue()]
+      : ruleHumanRows;
+  const supplementRows = uncertain
+    .filter((result) => !ruleNeedsHumanReview(result))
+    .map(issueFromUncertain);
   const [selectedImage, setSelectedImage] = useState(0);
   const [selectedFinding, setSelectedFinding] = useState<number | null>(null);
-  const [assistantOpen, setAssistantOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState<IssueTab>("MODIFY");
+  const [selectedIssue, setSelectedIssue] = useState<IssueRow | null>(null);
   const [feedbackOpen, setFeedbackOpen] = useState(false);
   const [feedbackReason, setFeedbackReason] =
     useState<FeedbackReason>("NOT_A_RISK");
   const [feedbackNote, setFeedbackNote] = useState("");
-  const [revision, setRevision] = useState<{
-    revisedCopy: string;
-    placeholders: string[];
-    note: string | null;
-  } | null>(null);
-  const [revisionState, setRevisionState] = useState<
-    "idle" | "loading" | "failed"
-  >("idle");
-  const [revisionExpanded, setRevisionExpanded] = useState(false);
-  const sourceText = useMemo(
-    () =>
-      review.canonical.extractedTextSegments
-        .map((segment) => segment.text)
-        .join("\n"),
-    [review.canonical],
-  );
-
-  async function generateRevision() {
-    if (!sourceText) return;
-    setRevisionState("loading");
-    try {
-      const response = await fetch("/api/rewrite", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          sourceText,
-          findings: review.ruleResults.filter((item) => item.status === "RISK"),
-        }),
-      });
-      const data = await response.json();
-      if (!response.ok || !data.revisedCopy) throw new Error("无法生成修改稿");
-      setRevision(data);
-      setRevisionState("idle");
-    } catch {
-      setRevisionState("failed");
-    }
-  }
-
   function selectFinding(finding: Finding, index: number) {
     setSelectedFinding(index);
     if (finding.imageIndex !== null) setSelectedImage(finding.imageIndex);
   }
 
-  async function copyRevision() {
-    if (revision) await navigator.clipboard.writeText(revision.revisedCopy);
-  }
   function saveFalsePositive() {
     // An issue-level correction must not change the material-level outcome.
     onHumanUpdate?.({
-      decision: humanReview?.decision ?? null,
+      issueKey: selectedIssue?.humanIssueKey,
+      decision: selectedIssue?.human ? "FALSE_POSITIVE" : undefined,
       feedback: {
         findingKey:
-          selectedFinding === null
+          selectedIssue?.id ??
+          (selectedFinding === null
             ? "material"
-            : (findings[selectedFinding]?.key ?? "material"),
+            : (findings[selectedFinding]?.key ?? "material")),
         reason: feedbackReason,
         note: feedbackNote.trim(),
       },
@@ -495,234 +645,107 @@ export function ReviewResultView({
           )}
         </section>
 
-        <section className="min-w-0 bg-white p-5 sm:p-6">
-          <div
-            className={`border-l-4 px-4 py-3 ${summary.tone === "pass" ? "border-[#1d8c62] bg-[#eff9f3]" : summary.tone === "risk" ? "border-[#c55449] bg-[#fff4f1]" : "border-[#c5922b] bg-[#fff9e9]"}`}
-          >
-            <p className="font-semibold">预审结论：{summary.title}</p>
-            <p className="mt-1 text-sm leading-6 text-[var(--text-secondary)]">
-              {summary.detail}
-            </p>
+        <section className="min-w-0 bg-white">
+          <div className="border-b border-[var(--border)] px-5 py-4 sm:px-6">
+            <h2 className="font-semibold">审核结果</h2>
+            <div className="mt-3 flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
+              <span>
+                系统预审{" "}
+                <span
+                  className={`ml-2 rounded px-2 py-1 text-xs font-medium ${review.overallStatus === "PASS" ? "bg-[#ecf8ef] text-[#237a4d]" : review.overallStatus === "RISK" ? "bg-[#fff0ed] text-[#b83b34]" : "bg-[#fff7e6] text-[#a55f00]"}`}
+                >
+                  {review.overallStatus === "RISK"
+                    ? "建议修改"
+                    : review.overallStatus === "UNCERTAIN"
+                      ? "待补充确认"
+                      : "已通过"}
+                </span>
+              </span>
+              <span className="text-[var(--text-secondary)]">
+                {modificationRows.length} 处问题
+              </span>
+              <span className="text-[var(--text-secondary)]">
+                {humanRows.length} 项建议人工复核
+              </span>
+            </div>
           </div>
-          <div className="mt-4 flex justify-end">
-            <button
-              type="button"
-              onClick={() => setAssistantOpen(true)}
-              className="rounded-md border border-[#b8ccff] px-3 py-2 text-sm font-medium text-[var(--primary)] hover:bg-[var(--active-bg)]"
-            >
-              询问审核助手
-            </button>
+          <div className="flex overflow-x-auto border-b border-[var(--border)] px-3">
+            {(
+              [
+                ["MODIFY", `需要修改（${modificationRows.length}）`],
+                ["SUPPLEMENT", `需要补充确认（${supplementRows.length}）`],
+                ["HUMAN", `建议人工复核（${humanRows.length}）`],
+                ["HISTORY", "处理记录"],
+              ] as const
+            ).map(([tab, label]) => (
+              <button
+                key={tab}
+                type="button"
+                onClick={() => setActiveTab(tab)}
+                className={`shrink-0 border-b-2 px-3 py-3 text-sm ${activeTab === tab ? "border-[var(--primary)] font-semibold text-[var(--primary)]" : "border-transparent text-[var(--text-secondary)] hover:text-[var(--text-primary)]"}`}
+              >
+                {label}
+              </button>
+            ))}
           </div>
-          {modificationFindings.length > 0 && (
-            <ResultGroup
-              title="需要修改"
-              count={modificationFindings.length}
-              tone="risk"
-              defaultOpen={modificationFindings.length <= 3}
-            >
-              <div className="divide-y divide-[var(--border)]">
-                {modificationFindings.map((finding) => {
-                  const index = findings.indexOf(finding);
-                  return (
-                    <FindingRow
-                      key={finding.key}
-                      finding={finding}
-                      index={index}
-                      selected={selectedFinding === index}
-                      onSelect={() => selectFinding(finding, index)}
-                      onFeedback={() => {
-                        setSelectedFinding(index);
-                        setFeedbackOpen(true);
-                      }}
-                      onCopy={(suggestion) => void copySuggestion(suggestion)}
-                    />
-                  );
-                })}
-              </div>
-            </ResultGroup>
+          {activeTab === "MODIFY" && (
+            <IssueTable
+              rows={modificationRows}
+              onOpen={(row) => {
+                if (row.finding && row.findingIndex !== null)
+                  selectFinding(row.finding, row.findingIndex);
+                setSelectedIssue(row);
+              }}
+            />
           )}
-          {supplementUncertain.length > 0 && (
-            <ResultGroup
-              title="需要补充确认"
-              count={supplementUncertain.length}
-              tone="supplement"
-              defaultOpen={supplementUncertain.length <= 2}
-            >
-              <div className="divide-y divide-[var(--border)]">
-                {supplementUncertain.map((item) => (
-                  <article key={item.ruleId} className="px-4 py-4">
-                    <p className="font-semibold">
-                      {item.ruleName}{" "}
-                      <span className="ml-1 text-xs font-normal text-[var(--text-tertiary)]">
-                        {item.ruleId}
-                      </span>
-                    </p>
-                    <p className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">
-                      {item.reason}
-                    </p>
-                    {item.missingInformation.length > 0 && (
-                      <p className="mt-2 text-sm leading-6 text-[#815300]">
-                        请补充：{item.missingInformation.join("、")}
-                      </p>
-                    )}
-                  </article>
-                ))}
-              </div>
-            </ResultGroup>
+          {activeTab === "SUPPLEMENT" && (
+            <IssueTable rows={supplementRows} onOpen={setSelectedIssue} />
           )}
-          {(humanFindings.length > 0 || humanUncertain.length > 0) && (
-            <ResultGroup
-              title="建议人工复核"
-              count={humanFindings.length + humanUncertain.length}
-              tone="human"
-              defaultOpen
-            >
-              <div className="divide-y divide-[var(--border)]">
-                {humanFindings.map((finding) => {
-                  const index = findings.indexOf(finding);
-                  return (
-                    <FindingRow
-                      key={finding.key}
-                      finding={finding}
-                      index={index}
-                      selected={selectedFinding === index}
-                      onSelect={() => selectFinding(finding, index)}
-                      onFeedback={() => {
-                        setSelectedFinding(index);
-                        setFeedbackOpen(true);
-                      }}
-                      onCopy={(suggestion) => void copySuggestion(suggestion)}
-                    />
-                  );
-                })}
-                {humanUncertain.map((item) => (
-                  <article key={item.ruleId} className="px-4 py-4">
-                    <p className="font-semibold">
-                      {item.ruleName}{" "}
-                      <span className="ml-1 text-xs font-normal text-[var(--text-tertiary)]">
-                        {item.ruleId}
-                      </span>
-                    </p>
-                    <p className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">
-                      {item.reason}
-                    </p>
-                  </article>
-                ))}
-              </div>
-            </ResultGroup>
+          {activeTab === "HUMAN" && (
+            <IssueTable
+              rows={humanRows}
+              onOpen={(row) => {
+                if (row.finding && row.findingIndex !== null)
+                  selectFinding(row.finding, row.findingIndex);
+                setSelectedIssue(row);
+              }}
+            />
           )}
-          {review.overallStatus === "RISK" && (
-            <section className="mt-5 rounded-lg border border-[#cce6e1] bg-[#f7fcfb] p-4">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <h2 className="font-semibold">推荐修改稿</h2>
-                  <p className="mt-1 text-xs text-[var(--text-secondary)]">
-                    仅调整已确认风险，不补造日期、数据或授权。
-                  </p>
+          {activeTab === "HISTORY" && (
+            <div className="space-y-4 px-5 py-6 text-sm text-[var(--text-secondary)]">
+              <div className="border-l-2 border-[var(--primary)] pl-3">
+                系统完成首次预审，结果：
+                {review.overallStatus === "RISK"
+                  ? "建议修改"
+                  : review.overallStatus === "UNCERTAIN"
+                    ? "待补充确认"
+                    : "已通过"}
+                。
+              </div>
+              {humanReview?.issueFeedback.map((feedback) => (
+                <div
+                  key={feedback.createdAt}
+                  className="border-l-2 border-[#d9e2f0] pl-3"
+                >
+                  问题被标记为误判：{feedback.reason}
                 </div>
-                <div className="flex gap-2">
-                  {revision && (
-                    <button
-                      type="button"
-                      onClick={() => void copyRevision()}
-                      className="rounded-md border border-[#9ad7cf] bg-white px-3 py-2 text-xs font-medium text-[#087d71]"
-                    >
-                      复制
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => void generateRevision()}
-                    disabled={revisionState === "loading"}
-                    className="rounded-md border border-[var(--border)] bg-white px-3 py-2 text-xs text-[var(--text-secondary)]"
-                  >
-                    {revision ? "再生成一版" : "生成修改稿"}
-                  </button>
+              ))}
+              {humanReview?.issueReviews.map((item) => (
+                <div key={item.issueKey} className="border-l-2 border-[#d9e2f0] pl-3">
+                  人工处理结果：{humanDecisionLabel(item.decision)}
                 </div>
-              </div>
-              {revisionState === "loading" && (
-                <p className="mt-3 text-sm text-[var(--text-secondary)]">
-                  正在生成修改稿…
-                </p>
-              )}
-              {revisionState === "failed" && (
-                <p className="mt-3 text-sm text-[var(--danger)]">
-                  暂时无法生成修改稿，请参考逐项建议。
-                </p>
-              )}
-              {revision && (
-                <>
-                  <button
-                    type="button"
-                    onClick={() => setRevisionExpanded((current) => !current)}
-                    className="mt-3 text-sm font-medium text-[var(--primary)]"
-                  >
-                    {revisionExpanded ? "收起全文" : "展开全文"}
-                  </button>
-                  {revisionExpanded && (
-                    <p className="mt-3 whitespace-pre-wrap rounded-md border border-[var(--border)] bg-white p-3 text-sm leading-7">
-                      {revision.revisedCopy}
-                    </p>
-                  )}
-                </>
-              )}
-            </section>
-          )}
-          {(humanFindings.length > 0 ||
-            humanUncertain.length > 0 ||
-            humanReview?.decision) && (
-            <section className="mt-5 rounded-lg border border-[#d9e5ff] bg-[#f7faff] p-4">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <h2 className="font-semibold">人工处理</h2>
-                  <p className="mt-1 text-sm text-[var(--text-secondary)]">
-                    状态：
-                    {humanDecisionLabel(humanReview?.decision ?? "PENDING")}
-                  </p>
-                </div>
-                {onHumanUpdate && (
-                  <div className="flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      onClick={() => onHumanUpdate({ decision: "APPROVED" })}
-                      className="rounded-md border border-[#98d4b5] bg-white px-3 py-2 text-sm font-medium text-[#18794e]"
-                    >
-                      审核通过
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        onHumanUpdate({ decision: "CONFIRMED_NEEDS_CHANGES" })
-                      }
-                      className="rounded-md border border-[#f5c4a8] bg-white px-3 py-2 text-sm font-medium text-[#b54708]"
-                    >
-                      确认需修改
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setFeedbackOpen(true)}
-                      className="rounded-md border border-[#b8ccff] bg-white px-3 py-2 text-sm font-medium text-[var(--primary)]"
-                    >
-                      标记误判
-                    </button>
-                  </div>
-                )}
-              </div>
-              <p className="mt-3 text-xs leading-5 text-[var(--text-secondary)]">
-                人工处理不会改写预审结论；“标记误判”仅记录反馈，不会把整条素材自动设为通过。
-              </p>
-            </section>
+              ))}
+            </div>
           )}
         </section>
       </div>
       <details className="border-t border-[var(--border)] bg-white px-5 py-4 sm:px-6">
         <summary className="cursor-pointer text-sm font-semibold">
-          查看审核详情 / 技术详情
+          查看审核范围与处理说明
         </summary>
         <p className="mt-3 text-sm text-[var(--text-secondary)]">
-          内部状态：{review.overallStatus} · 已检查 {review.trace.rulesChecked}
-          /10 条规则 · 自动修复 {review.trace.retryCount}/1 次 · 模型{" "}
-          {review.trace.model}
+          已按 A-01 至 A-10
+          完成预审。明确风险进入“需要修改”，素材信息不完整进入“需要补充确认”，仅敏感词与背书真实性情形进入“建议人工复核”。
         </p>
       </details>
       {feedbackOpen && (
@@ -788,10 +811,21 @@ export function ReviewResultView({
           </div>
         </div>
       )}
-      {assistantOpen && (
-        <ReviewAssistantDrawer
-          review={review}
-          onClose={() => setAssistantOpen(false)}
+      {selectedIssue && (
+        <IssueDrawer
+          row={selectedIssue}
+          onClose={() => setSelectedIssue(null)}
+          onFeedback={() => setFeedbackOpen(true)}
+          onCopy={(suggestion) => void copySuggestion(suggestion)}
+          onHumanUpdate={
+            onHumanUpdate
+              ? (decision) =>
+                  onHumanUpdate({
+                    issueKey: selectedIssue.humanIssueKey ?? selectedIssue.id,
+                    decision,
+                  })
+              : undefined
+          }
         />
       )}
     </>

@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { canonicalizeText } from "../src/lib/agent/canonical-content";
-import { aggregateReview } from "../src/lib/agent/result-aggregator";
+import { aggregateReview, safeFallback } from "../src/lib/agent/result-aggregator";
 import { enforceSensitiveTermIntercept } from "../src/lib/rules/sensitive-lexicon";
 import { enforceRulePolicy } from "../src/lib/rules/policy-intercept";
-import { getRule } from "../src/lib/rules/registry";
+import { getRule, getSeverity } from "../src/lib/rules/registry";
 import type { ModelReview } from "../src/lib/schemas/review";
 import { validateModelReview } from "../src/lib/validation/result-validator";
+import { humanReviewIssues } from "../src/lib/review-task-store";
 
 const ruleIds = [
   "A-01",
@@ -88,7 +89,7 @@ describe("review validator", () => {
     expect(result.overallStatus).toBe("PASS");
   });
 
-  it("does not flag A-08 when a zero-price trial visibly discloses its fee and renewal amount", () => {
+  it("does not force A-08 to PASS merely because a fee amount is visible", () => {
     const content = canonicalizeText(
       "0元试用，需支付39元运费，到期自动续费每月59元，可随时取消。",
     );
@@ -103,7 +104,72 @@ describe("review validator", () => {
     const corrected = enforceRulePolicy(review, content);
     expect(
       corrected.ruleResults.find((item) => item.ruleId === "A-08"),
-    ).toMatchObject({ status: "PASS", suggestion: null });
+    ).toMatchObject({ status: "RISK" });
+  });
+
+  it("only clears A-02 when source, scope and time are all present", () => {
+    const content = canonicalizeText(
+      "销量突破10万件。数据来源：品牌订单系统；统计口径：已支付订单件数。",
+    );
+    const review = passingReview();
+    review.ruleResults[1] = {
+      ...review.ruleResults[1],
+      status: "RISK",
+      evidence: ["销量突破10万件"],
+      reason: "缺少时间范围。",
+      suggestion: "补充统计时间。",
+    };
+    expect(
+      enforceRulePolicy(review, content).ruleResults.find(
+        (item) => item.ruleId === "A-02",
+      )?.status,
+    ).toBe("RISK");
+  });
+
+  it("does not treat an endorsement claim as verified from page wording alone", () => {
+    const content = canonicalizeText("专家王教授推荐本产品；广告页展示已获授权。");
+    const review = passingReview();
+    review.ruleResults[8] = {
+      ...review.ruleResults[8],
+      status: "UNCERTAIN",
+      reason: "真实性与授权无法从当前素材验证。",
+      suggestion: "补充授权材料。",
+      missingInformation: ["授权证明"],
+    };
+    expect(
+      enforceRulePolicy(review, content).ruleResults.find(
+        (item) => item.ruleId === "A-09",
+      )?.status,
+    ).toBe("UNCERTAIN");
+  });
+
+  it("does not clear A-10 from completeness alone when image quality is unclear", () => {
+    const content = {
+      ...canonicalizeText("活动规则"),
+      inputType: "image" as const,
+      isMaterialComplete: true,
+      imageQuality: "PARTIAL" as const,
+      unclearRegions: ["底部小字"],
+    };
+    const review = passingReview();
+    review.ruleResults[9] = {
+      ...review.ruleResults[9],
+      status: "UNCERTAIN",
+      reason: "底部小字不清晰。",
+      suggestion: "上传清晰原图。",
+      missingInformation: ["清晰原图"],
+    };
+    expect(
+      enforceRulePolicy(review, content).ruleResults.find(
+        (item) => item.ruleId === "A-10",
+      )?.status,
+    ).toBe("UNCERTAIN");
+  });
+
+  it("uses deterministic A-05 escalation rather than a fixed high-risk rule", () => {
+    expect(getSeverity("A-05", "RISK", ["焕亮肤色"])).toBe("MEDIUM");
+    expect(getSeverity("A-05", "RISK", ["7天保证见效"])).toBe("HIGH");
+    expect(getSeverity("A-09", "UNCERTAIN", ["专家推荐"])).toBeNull();
   });
 
   it("treats 100%有效 as absolute/effect claims rather than a statistical A-02 claim", () => {
@@ -204,5 +270,15 @@ describe("review validator", () => {
       needHumanReview: false,
     });
     expect(result.needHumanReview).toBe(false);
+  });
+
+  it("creates a visible human queue issue for a safe fallback", () => {
+    const result = safeFallback(trace, "审核服务未返回可验证结果。");
+    expect(result.needHumanReview).toBe(true);
+    expect(
+      humanReviewIssues({ ...result, canonical: canonicalizeText("素材") }),
+    ).toMatchObject([
+      { issueKey: "human:system-fallback" },
+    ]);
   });
 });

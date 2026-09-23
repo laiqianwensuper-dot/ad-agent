@@ -1,9 +1,14 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 
-const defaultSet =
-  "C:/Users/admin/Downloads/AdGuard_Eval_Set_V1/adguard_eval_v1";
-const evalRoot = process.argv[2] ?? defaultSet;
+const evalRoot =
+  process.argv.slice(2).find((argument) => !argument.startsWith("--")) ??
+  process.env.ADGUARD_EVAL_ROOT;
+if (!evalRoot) {
+  throw new Error(
+    "请传入 Eval 根目录：npm run eval -- <AdGuard_Eval_Set_V1/adguard_eval_v1>。",
+  );
+}
 const endpoint =
   process.env.ADGUARD_EVAL_ENDPOINT ?? "http://127.0.0.1:3000/api/review";
 const onlyText = process.argv.includes("--text-only");
@@ -37,18 +42,30 @@ function actualRuleIds(review) {
     .sort();
 }
 
+function parseExpectedStatuses(value) {
+  if (!value) return null;
+  return new Map(
+    value
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean)
+      .map((item) => item.split(":"))
+      .filter((parts) => parts.length === 2)
+      .map(([ruleId, status]) => [ruleId.trim(), status.trim()]),
+  );
+}
+
+function sameRuleStatuses(review, expected) {
+  if (!expected) return null;
+  return review.ruleResults.every(
+    (result) => expected.get(result.ruleId) === result.status,
+  );
+}
+
 function sameSet(left, right) {
   return (
     left.length === right.length &&
     left.every((value, index) => value === right[index])
-  );
-}
-
-function needsHumanReview(review) {
-  return review.ruleResults.some(
-    (result) =>
-      (result.ruleId === "A-06" && result.status === "RISK") ||
-      (result.ruleId === "A-09" && result.status === "UNCERTAIN"),
   );
 }
 
@@ -99,8 +116,11 @@ async function evaluate(testCase) {
     const review = await reviewCase(testCase);
     const expectedRules = expectedRuleIds(testCase.expected_rule_hits).sort();
     const actualRules = actualRuleIds(review);
+    const expectedStatuses = parseExpectedStatuses(
+      testCase.expected_rule_statuses,
+    );
     const expectedHuman = testCase.expected_human_review === "是";
-    const actualHuman = needsHumanReview(review);
+    const actualHuman = review.needHumanReview;
     const row = {
       id: testCase.case_id,
       expected: testCase.expected_overall,
@@ -109,6 +129,7 @@ async function evaluate(testCase) {
       actualRules: actualRules.join(",") || "-",
       overall: review.overallStatus === testCase.expected_overall,
       rules: sameSet(actualRules, expectedRules),
+      ruleStatuses: sameRuleStatuses(review, expectedStatuses),
       human: actualHuman === expectedHuman,
       ms: Date.now() - started,
       error: "",
@@ -125,6 +146,7 @@ async function evaluate(testCase) {
       actualRules: "-",
       overall: false,
       rules: false,
+      ruleStatuses: null,
       human: false,
       ms: Date.now() - started,
       error: error instanceof Error ? error.message : "Unknown error",
@@ -152,6 +174,8 @@ const summary = {
   cases: rows.length,
   overallMatched: rows.filter((row) => row.overall).length,
   ruleSetMatched: rows.filter((row) => row.rules).length,
+  ruleStatusMatched: rows.filter((row) => row.ruleStatuses === true).length,
+  ruleStatusUnspecified: rows.filter((row) => row.ruleStatuses === null).length,
   humanRouteMatched: rows.filter((row) => row.human).length,
   errors: rows.filter((row) => row.error).length,
 };

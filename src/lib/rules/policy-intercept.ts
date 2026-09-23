@@ -25,9 +25,9 @@ const sensitiveOnly =
 const independentAbsolute = /(?:最佳|第一|唯一|100\s*%|百分之百)/;
 const endorsementSignal =
   /(?:专家|医生|机构|推荐|好评|评价|见证|顾问|认证|背书)/;
-const dataEvidence =
-  /(?:数据来源|来源[：:]|样本|统计期|统计范围|测试条件|测试报告|报告编号|实验室)/;
-const endorsementEvidence = /(?:身份[：:]|授权编号|授权有效期|使用授权|授权至)/;
+const dataSourceEvidence = /(?:数据来源|来源[：:]|测试报告|报告编号|实验室)/;
+const dataScopeEvidence = /(?:样本|统计口径|统计范围|测试条件)/;
+const dataTimeEvidence = /(?:统计期|统计时间|\d{4}\s*年\s*\d{1,2}\s*月(?:\s*\d{1,2}\s*日)?|\d{1,2}\s*月\s*\d{1,2}\s*日)/;
 
 function findRule(review: ModelReview, ruleId: ModelRuleResult["ruleId"]) {
   return review.ruleResults.find((item) => item.ruleId === ruleId)!;
@@ -113,10 +113,15 @@ export function enforceRulePolicy(
       "当前材料未发现百分比、数量、销量或增长等宣传性统计数据。",
     );
   }
-  if (numericDataClaim.test(text) && dataEvidence.test(text)) {
+  if (
+    numericDataClaim.test(text) &&
+    dataSourceEvidence.test(text) &&
+    dataScopeEvidence.test(text) &&
+    dataTimeEvidence.test(text)
+  ) {
     setPass(
       findRule(result, "A-02"),
-      "当前统计或比较数据具有可识别的来源、测试条件、口径或报告信息。",
+      "当前统计数据已同时披露可识别的来源、统计口径或样本，以及时间范围。",
     );
   }
 
@@ -195,12 +200,6 @@ export function enforceRulePolicy(
       "当前材料未发现用户评价、专家推荐或机构背书等 A-09 关注内容。",
     );
   }
-  if (endorsementSignal.test(text) && endorsementEvidence.test(text)) {
-    setPass(
-      findRule(result, "A-09"),
-      "当前背书或顾问信息具有可识别的身份与授权依据。",
-    );
-  }
 
   // A-08 does not guess undisclosed costs. If a zero-price offer explicitly
   // states its fee type and amount, it is not an A-08 violation; legibility is
@@ -211,20 +210,10 @@ export function enforceRulePolicy(
   const hasFeeClue = /(?:押金|运费|邮费|自动续费|续费|服务费|月费|会员费)/.test(
     text,
   );
-  const hasFeeAmount =
-    /(?:[¥￥]\s*\d|\d+(?:\.\d+)?\s*元|每月\s*\d|\d+(?:\.\d+)?\s*\/\s*月)/.test(
-      text,
-    );
   if (hasFreeClaim && !hasFeeClue) {
     setPass(
       findRule(result, "A-08"),
       "素材出现免费或 0 元表述，但未出现押金、运费、自动续费等费用线索；不臆测隐藏费用。",
-    );
-  }
-  if (hasFreeClaim && hasFeeClue && hasFeeAmount) {
-    setPass(
-      findRule(result, "A-08"),
-      "素材已同时披露费用类型与金额，当前材料未发现 A-08 所述的费用未披露风险。",
     );
   }
   if (hasFreeClaim && !promotionSignal.test(text)) {
@@ -237,7 +226,11 @@ export function enforceRulePolicy(
       "当前材料是免费试用或领取信息，未出现折扣、满减、赠品等 A-04 优惠活动。",
     );
   }
-  if (canonical.isMaterialComplete === true) {
+  if (
+    canonical.isMaterialComplete === true &&
+    canonical.imageQuality === "GOOD" &&
+    canonical.unclearRegions.length === 0
+  ) {
     setPass(
       findRule(result, "A-10"),
       "素材页面完整，未发现影响 A-01 至 A-09 判断的关键内容缺失。",

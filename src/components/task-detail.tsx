@@ -6,6 +6,7 @@ import {
   BookOpenCheck,
   CircleHelp,
   ClipboardList,
+  Pencil,
   Plus,
   ShieldCheck,
   UserRound,
@@ -93,6 +94,8 @@ export function TaskDetail({ taskId }: { taskId: string }) {
   );
   const [images, setImages] = useState<{ url: string; name: string }[]>([]);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [editingItemId, setEditingItemId] = useState<string | null>(null);
+  const [nameDraft, setNameDraft] = useState("");
   const selectedItemId = searchParams.get("item");
   const selectedItem = useMemo(
     () =>
@@ -146,7 +149,8 @@ export function TaskDetail({ taskId }: { taskId: string }) {
     router.replace(`/tasks/${taskId}?item=${item.id}`, { scroll: false });
   }
   function updateHuman(input: {
-    decision: HumanDecision;
+    issueKey?: string;
+    decision?: HumanDecision;
     note?: string;
     feedback?: { findingKey: string; reason: FeedbackReason; note: string };
   }) {
@@ -163,8 +167,20 @@ export function TaskDetail({ taskId }: { taskId: string }) {
             : {
                 ...item,
                 humanReview: {
-                  decision: input.decision,
-                  note: input.note ?? item.humanReview.note,
+                  issueReviews:
+                    input.issueKey && input.decision && input.decision !== "PENDING"
+                      ? [
+                          ...item.humanReview.issueReviews.filter(
+                            (review) => review.issueKey !== input.issueKey,
+                          ),
+                          {
+                            issueKey: input.issueKey,
+                            decision: input.decision,
+                            note: input.note ?? null,
+                            updatedAt: now,
+                          },
+                        ]
+                      : item.humanReview.issueReviews,
                   updatedAt: now,
                   issueFeedback: input.feedback
                     ? [
@@ -174,6 +190,27 @@ export function TaskDetail({ taskId }: { taskId: string }) {
                     : item.humanReview.issueFeedback,
                 },
               },
+        ),
+      };
+      saveStoredTasks(
+        loadStoredTasks().map((item) => (item.id === next.id ? next : item)),
+      );
+      return next;
+    });
+  }
+
+  function renameItem(itemId: string) {
+    const name = nameDraft.trim();
+    setEditingItemId(null);
+    if (!name) return;
+    const now = new Date().toISOString();
+    setTask((current) => {
+      if (!current) return current;
+      const next: StoredReviewTask = {
+        ...current,
+        updatedAt: now,
+        contentItems: current.contentItems.map((item) =>
+          item.id === itemId ? { ...item, name } : item,
         ),
       };
       saveStoredTasks(
@@ -279,16 +316,10 @@ export function TaskDetail({ taskId }: { taskId: string }) {
                     </span>
                   </div>
                   <div className="mt-4 space-y-1">
-                    {task.contentItems.map((item, index) => (
-                      <button
-                        key={item.id}
-                        type="button"
-                        onClick={() => selectItem(item)}
-                        className={`w-full rounded-md px-3 py-3 text-left transition ${item.id === selectedItem.id ? "bg-[var(--active-bg)] text-[var(--primary)]" : "hover:bg-[var(--hover-bg)]"}`}
-                      >
-                        <p className="truncate text-sm font-medium">
-                          {String(index + 1).padStart(2, "0")} {item.name}
-                        </p>
+                    {task.contentItems.map((item, index) => {
+                      const selected = item.id === selectedItem.id;
+                      const editing = item.id === editingItemId;
+                      const meta = (
                         <div className="mt-1 flex items-center gap-2">
                           <span className="text-xs text-[var(--text-tertiary)]">
                             {item.kind === "TEXT_AND_IMAGE"
@@ -303,8 +334,58 @@ export function TaskDetail({ taskId }: { taskId: string }) {
                             </span>
                           )}
                         </div>
-                      </button>
-                    ))}
+                      );
+                      if (editing) {
+                        return (
+                          <div
+                            key={item.id}
+                            className={`rounded-md px-3 py-3 ${selected ? "bg-[var(--active-bg)]" : "bg-white"}`}
+                          >
+                            <input
+                              autoFocus
+                              value={nameDraft}
+                              onChange={(event) =>
+                                setNameDraft(event.target.value)
+                              }
+                              onBlur={() => renameItem(item.id)}
+                              onKeyDown={(event) => {
+                                if (event.key === "Enter") renameItem(item.id);
+                                if (event.key === "Escape")
+                                  setEditingItemId(null);
+                              }}
+                              aria-label="素材名称"
+                              className="w-full rounded border border-[#b8ccff] bg-white px-2 py-1 text-sm font-medium outline-none focus:ring-2 focus:ring-[#3370ff]/20"
+                            />
+                            {meta}
+                          </div>
+                        );
+                      }
+                      return (
+                        <div key={item.id} className="group relative">
+                          <button
+                            type="button"
+                            onClick={() => selectItem(item)}
+                            className={`w-full rounded-md px-3 py-3 pr-9 text-left transition ${selected ? "bg-[var(--active-bg)] text-[var(--primary)]" : "hover:bg-[var(--hover-bg)]"}`}
+                          >
+                            <p className="truncate text-sm font-medium">
+                              {String(index + 1).padStart(2, "0")} {item.name}
+                            </p>
+                            {meta}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setNameDraft(item.name);
+                              setEditingItemId(item.id);
+                            }}
+                            className="absolute right-2 top-2 rounded p-1 text-[var(--text-tertiary)] opacity-0 transition hover:bg-white hover:text-[var(--primary)] group-hover:opacity-100 focus:opacity-100"
+                            aria-label={`重命名 ${item.name}`}
+                          >
+                            <Pencil size={14} />
+                          </button>
+                        </div>
+                      );
+                    })}
                   </div>
                 </aside>
                 <ReviewResultView

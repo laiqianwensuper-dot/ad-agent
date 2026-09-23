@@ -1,4 +1,4 @@
-import { getRule, severityByRule } from "@/lib/rules/registry";
+import { getRule, getSeverity } from "@/lib/rules/registry";
 import type {
   CanonicalContent,
   ModelReview,
@@ -54,7 +54,7 @@ export function aggregateReview(
           : [];
       }),
       reason: item.reason,
-      severity: item.status === "RISK" ? severityByRule[item.ruleId] : null,
+      severity: getSeverity(item.ruleId, item.status, item.evidence),
       suggestion: item.suggestion ?? null,
       missingInformation: item.missingInformation,
       needHumanReview: humanReviewRequired(item.ruleId, item.status),

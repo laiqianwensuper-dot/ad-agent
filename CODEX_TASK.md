@@ -15,7 +15,7 @@
 3. `rules.json`
 4. `severity_policy.json`
 5. `output_schema.json`
-6. `eval_cases.json`
+6. 外部 `AdGuard_Eval_Set_V1/adguard_eval_v1/expected_results.json`（通过 `npm run eval -- <eval-root>` 显式传入）
 
 这些文件具有不同权限：
 - `rules.json`：业务规则 Source of Truth，禁止擅自增加/删除/改写规则含义；
@@ -219,7 +219,7 @@ Required views/sections:
 - click to details.
 
 ### D. Evaluation Lab
-- load local `eval_cases.json`;
+- load the explicitly supplied `AdGuard_Eval_Set_V1` manifest;
 - at minimum show the cases and expected fields;
 - if feasible, add a developer-only/manual “run text evals” control;
 - do not expose API key.

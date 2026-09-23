@@ -4,7 +4,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   BookOpenCheck,
-  ChevronDown,
   CircleHelp,
   ClipboardList,
   ListChecks,
@@ -23,11 +22,16 @@ import {
 } from "@/components/asset-dropzone";
 import { saveAsset } from "@/lib/asset-store";
 import {
+  MAX_REVIEW_IMAGE_BYTES,
+  MAX_REVIEW_IMAGE_LABEL,
+  imageBytes,
+} from "@/lib/upload-policy";
+import {
   createContentItem,
   createStoredTask,
+  humanReviewIssues,
+  isHumanIssueResolved,
   loadStoredTasks,
-  needsHumanHandling,
-  requiresHumanReview,
   saveStoredTasks,
   type ReviewPresentation,
   type ReviewTaskKind,
@@ -96,6 +100,14 @@ function contentKind(copy: string, assets: UploadAsset[]): ReviewTaskKind {
     : assets.length
       ? "IMAGE"
       : "TEXT";
+}
+
+function materialNameFromAsset(asset: UploadAsset) {
+  const source = (asset.displayName || asset.originalFileName).trim();
+  return source.replace(/\.[^./\\]+$/, "").trim() || "未命名素材";
+}
+function looksLikeGeneratedFileName(value: string) {
+  return /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(value);
 }
 function dateLabel(value: string) {
   return new Intl.DateTimeFormat("zh-CN", {
@@ -266,9 +278,14 @@ export function ReviewWorkspace() {
   const pendingHuman = useMemo(
     () =>
       tasks.flatMap((task) =>
-        task.contentItems
-          .filter(needsHumanHandling)
-          .map((item) => ({ task, item })),
+        task.contentItems.flatMap((item) =>
+          humanReviewIssues(item.review)
+            .filter(
+              (issue) =>
+                !isHumanIssueResolved(item.humanReview, issue.issueKey),
+            )
+            .map((issue) => ({ task, item, issue })),
+        ),
       ),
     [tasks],
   );
@@ -307,20 +324,33 @@ export function ReviewWorkspace() {
   function bulkImport(files: File[]) {
     const assets = filesToUploadAssets(files).slice(0, 10);
     if (!assets.length) return;
-    const prefix = taskName.trim() || "素材";
     setDraftItems((current) => {
       const replaceInitialBlank =
         current.length === 1 &&
         !current[0].name.trim() &&
         !current[0].copy.trim() &&
         current[0].assets.length === 0;
-      const existingCount = replaceInitialBlank ? 0 : current.length;
-      const imported = assets.map((asset, index) => ({
-        id: crypto.randomUUID(),
-        name: `${prefix}-${String(existingCount + index + 1).padStart(2, "0")}`,
-        copy: "",
-        assets: [asset],
-      }));
+      const usedNames = new Set(
+        (replaceInitialBlank ? [] : current)
+          .map((item) => item.name.trim())
+          .filter(Boolean),
+      );
+      const imported = assets.map((asset) => {
+        const sourceName = materialNameFromAsset(asset);
+        const generated = looksLikeGeneratedFileName(sourceName);
+        const base = generated
+          ? taskName.trim() || "未命名素材"
+          : sourceName;
+        let ordinal = 1;
+        let name = generated ? `${base}-${String(ordinal).padStart(2, "0")}` : base;
+        let suffix = 2;
+        while (usedNames.has(name)) {
+          if (generated) name = `${base}-${String(++ordinal).padStart(2, "0")}`;
+          else name = `${base}-${suffix++}`;
+        }
+        usedNames.add(name);
+        return { id: crypto.randomUUID(), name, copy: "", assets: [asset] };
+      });
       return replaceInitialBlank ? imported : [...current, ...imported];
     });
   }
@@ -347,6 +377,17 @@ export function ReviewWorkspace() {
     );
     if (!reviewable.length || isReviewing) {
       setError("请至少填写一段文案或上传一张图片。");
+      return;
+    }
+    const oversized = reviewable.find(
+      (item) =>
+        imageBytes(item.assets.map((asset) => asset.file)) >
+        MAX_REVIEW_IMAGE_BYTES,
+    );
+    if (oversized) {
+      setError(
+        `“${oversized.name || "未命名素材"}”的配图总大小不能超过 ${MAX_REVIEW_IMAGE_LABEL}。`,
+      );
       return;
     }
     setError(null);
@@ -480,7 +521,6 @@ function NewReviewPage({
   onRemove: (id: string) => void;
   onSubmit: () => void;
 }) {
-  const [addMenuOpen, setAddMenuOpen] = useState(false);
   return (
     <section>
       <div className="mb-5">
@@ -511,43 +551,23 @@ function NewReviewPage({
         <div className="p-6">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <h2 className="text-lg font-semibold">审核内容</h2>
-            <div className="relative">
+            <div className="flex flex-wrap gap-2">
               <button
                 type="button"
-                onClick={() => setAddMenuOpen((open) => !open)}
-                aria-expanded={addMenuOpen}
+                onClick={onAdd}
                 className="rounded-md border border-[#cbd8ef] px-3 py-2 text-sm font-medium text-[var(--primary)] hover:bg-[var(--active-bg)]"
               >
                 <Plus className="mr-1 inline" size={16} />
                 添加内容
-                <ChevronDown className="ml-1 inline" size={15} />
               </button>
-              {addMenuOpen && (
-                <div className="absolute right-0 z-20 mt-2 w-48 overflow-hidden rounded-md border border-[var(--border)] bg-white py-1 shadow-lg">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      onAdd();
-                      setAddMenuOpen(false);
-                    }}
-                    className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm hover:bg-[var(--hover-bg)]"
-                  >
-                    <Plus size={16} />
-                    新建图文内容
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      batchInputRef.current?.click();
-                      setAddMenuOpen(false);
-                    }}
-                    className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm hover:bg-[var(--hover-bg)]"
-                  >
-                    <Upload size={16} />
-                    批量导入独立图片
-                  </button>
-                </div>
-              )}
+              <button
+                type="button"
+                onClick={() => batchInputRef.current?.click()}
+                className="rounded-md border border-[#cbd8ef] px-3 py-2 text-sm font-medium text-[var(--primary)] hover:bg-[var(--active-bg)]"
+              >
+                <Upload className="mr-1 inline" size={16} />
+                批量导入图片
+              </button>
               <input
                 ref={batchInputRef}
                 type="file"
@@ -620,13 +640,18 @@ function ContentEditor({
         <span className="text-sm font-semibold text-[var(--text-primary)]">
           内容 {String(index + 1).padStart(2, "0")}
         </span>
-        <input
-          value={item.name}
-          onChange={(event) => onPatch({ name: event.target.value })}
-          aria-label="内容项名称"
-          className="min-w-0 flex-1 bg-transparent text-sm font-medium text-[var(--text-primary)] outline-none placeholder:text-[var(--text-tertiary)]"
-          placeholder="内容项名称，例如：朋友圈预热"
-        />
+        <label className="flex min-w-0 flex-1 items-center gap-2 text-sm">
+          <span className="shrink-0 text-xs font-medium text-[var(--text-secondary)]">
+            素材名称
+          </span>
+          <input
+            value={item.name}
+            onChange={(event) => onPatch({ name: event.target.value })}
+            aria-label="素材名称"
+            className="min-w-0 flex-1 bg-transparent font-medium text-[var(--text-primary)] outline-none placeholder:text-[var(--text-tertiary)]"
+            placeholder="例如：朋友圈预热"
+          />
+        </label>
         <span className="rounded bg-[#e8f3ff] px-2 py-1 text-xs font-medium text-[var(--primary)]">
           {item.copy.trim() && item.assets.length
             ? "图文"
@@ -672,7 +697,7 @@ function ContentEditor({
               maxFiles={5}
               title="配套图片（最多 5 张）"
               emptyLabel="拖入图片，或点击上传"
-              description="PNG、JPG、WEBP"
+              description={`PNG、JPG、WEBP · 合计不超过 ${MAX_REVIEW_IMAGE_LABEL}`}
               compact
             />
           </div>
@@ -685,7 +710,7 @@ function ContentEditor({
             maxFiles={5}
             title="图片"
             emptyLabel="拖入图片，或点击上传"
-            description="PNG、JPG、WEBP"
+            description={`PNG、JPG、WEBP · 合计不超过 ${MAX_REVIEW_IMAGE_LABEL}`}
             compact
           />
           <button
@@ -721,10 +746,10 @@ function severityCopy(rule: RegisteredRule) {
 }
 
 function RuleLibrary() {
-  const [selectedId, setSelectedId] = useState(rules[0]?.rule_id ?? "A-01");
-  const selected =
-    rules.find((rule) => rule.rule_id === selectedId) ?? rules[0];
-  if (!selected) return null;
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const selected = selectedId
+    ? (rules.find((rule) => rule.rule_id === selectedId) ?? null)
+    : null;
   return (
     <section>
       <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
@@ -733,7 +758,13 @@ function RuleLibrary() {
           受控配置 · 只读
         </span>
       </div>
-      <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
+      <div
+        className={
+          selected
+            ? "grid gap-5 2xl:grid-cols-[minmax(0,1fr)_360px]"
+            : "grid gap-5"
+        }
+      >
         <div className="overflow-hidden rounded-lg border border-[var(--border)] bg-white">
           <div className="overflow-x-auto">
             <table className="min-w-[700px] w-full text-left text-sm">
@@ -750,7 +781,7 @@ function RuleLibrary() {
                   <tr
                     key={rule.rule_id}
                     onClick={() => setSelectedId(rule.rule_id)}
-                    className={`cursor-pointer border-t border-[var(--border)] transition hover:bg-[var(--hover-bg)] ${selected.rule_id === rule.rule_id ? "bg-[#f4f8ff]" : ""}`}
+                    className={`cursor-pointer border-t border-[var(--border)] transition hover:bg-[var(--hover-bg)] ${selected?.rule_id === rule.rule_id ? "bg-[#f4f8ff]" : ""}`}
                   >
                     <td className="px-5 py-3.5 font-medium">
                       <span className="mr-2 text-[var(--text-tertiary)]">
@@ -775,59 +806,68 @@ function RuleLibrary() {
             </table>
           </div>
         </div>
-        <aside className="rounded-lg border border-[var(--border)] bg-white p-5">
-          <div className="flex items-center justify-between">
-            <h2 className="text-lg font-semibold">
-              {selected.rule_id} {selected.rule_name}
-            </h2>
-            <span className="text-xs text-[var(--text-tertiary)]">只读</span>
-          </div>
-          <div className="mt-5 space-y-5">
-            <div>
-              <p className="text-xs font-semibold text-[var(--text-tertiary)]">
-                规则要求
-              </p>
-              <p className="mt-2 text-sm leading-6">
-                {selected.source_requirement}
-              </p>
+        {selected && (
+          <aside className="rounded-lg border border-[var(--border)] bg-white p-5">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-semibold">
+                {selected.rule_id} {selected.rule_name}
+              </h2>
+              <button
+                type="button"
+                onClick={() => setSelectedId(null)}
+                className="rounded p-1 text-[var(--text-tertiary)] hover:bg-[var(--hover-bg)]"
+                aria-label="关闭规则详情"
+              >
+                <X size={17} />
+              </button>
             </div>
-            <div>
-              <p className="text-xs font-semibold text-[var(--text-tertiary)]">
-                关注内容
-              </p>
-              <div className="mt-2 flex flex-wrap gap-2">
-                {selected.detection_focus.map((focus) => (
-                  <span
-                    key={focus}
-                    className="rounded bg-[#f5f7fa] px-2 py-1 text-xs text-[var(--text-secondary)]"
-                  >
-                    {focus}
-                  </span>
-                ))}
-              </div>
-            </div>
-            {selected.required_information.length > 0 && (
+            <div className="mt-5 space-y-5">
               <div>
                 <p className="text-xs font-semibold text-[var(--text-tertiary)]">
-                  需要识别的信息
+                  规则要求
                 </p>
-                <ul className="mt-2 space-y-1 text-sm leading-6 text-[var(--text-secondary)]">
-                  {selected.required_information.map((item) => (
-                    <li key={item}>• {item}</li>
-                  ))}
-                </ul>
+                <p className="mt-2 text-sm leading-6">
+                  {selected.source_requirement}
+                </p>
               </div>
-            )}
-            <div>
-              <p className="text-xs font-semibold text-[var(--text-tertiary)]">
-                当前处理方式
-              </p>
-              <p className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">
-                {handlingCopy(selected)}
-              </p>
+              <div>
+                <p className="text-xs font-semibold text-[var(--text-tertiary)]">
+                  关注内容
+                </p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {selected.detection_focus.map((focus) => (
+                    <span
+                      key={focus}
+                      className="rounded bg-[#f5f7fa] px-2 py-1 text-xs text-[var(--text-secondary)]"
+                    >
+                      {focus}
+                    </span>
+                  ))}
+                </div>
+              </div>
+              {selected.required_information.length > 0 && (
+                <div>
+                  <p className="text-xs font-semibold text-[var(--text-tertiary)]">
+                    需要识别的信息
+                  </p>
+                  <ul className="mt-2 space-y-1 text-sm leading-6 text-[var(--text-secondary)]">
+                    {selected.required_information.map((item) => (
+                      <li key={item}>• {item}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              <div>
+                <p className="text-xs font-semibold text-[var(--text-tertiary)]">
+                  当前处理方式
+                </p>
+                <p className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">
+                  {handlingCopy(selected)}
+                </p>
+              </div>
             </div>
-          </div>
-        </aside>
+          </aside>
+        )}
       </div>
     </section>
   );
@@ -919,7 +959,7 @@ function TaskTable({
               : "text-[var(--text-secondary)]"
           }
         >
-          待复核 {summary.uncertain}
+          待补充确认 {summary.uncertain}
         </button>
         <button
           type="button"
@@ -962,8 +1002,18 @@ function TaskTable({
             <tbody>
               {filtered.map((task) => {
                 const taskStatus = aggregateStatus(task.contentItems);
-                const pending =
-                  task.contentItems.filter(needsHumanHandling).length;
+                const pending = task.contentItems.reduce(
+                  (count, item) =>
+                    count +
+                    humanReviewIssues(item.review).filter(
+                      (issue) =>
+                        !isHumanIssueResolved(
+                          item.humanReview,
+                          issue.issueKey,
+                        ),
+                    ).length,
+                  0,
+                );
                 return (
                   <tr
                     key={task.id}
@@ -983,7 +1033,7 @@ function TaskTable({
                       <ResultTag status={taskStatus} />
                     </td>
                     <td className="px-4 py-4 text-[var(--text-secondary)]">
-                      {pending ? `待复核 ${pending}` : "不需要"}
+                      {pending ? `待处理 ${pending}` : "不需要"}
                     </td>
                     <td className="px-5 py-4 text-[var(--text-tertiary)]">
                       {dateLabel(task.updatedAt)}
@@ -1004,7 +1054,11 @@ function HumanReviewList({
   onOpen,
   onCreate,
 }: {
-  rows: { task: StoredReviewTask; item: StoredContentItem }[];
+  rows: {
+    task: StoredReviewTask;
+    item: StoredContentItem;
+    issue: { issueKey: string; label: string };
+  }[];
   onOpen: (task: StoredReviewTask, item?: StoredContentItem) => void;
   onCreate: () => void;
 }) {
@@ -1045,9 +1099,9 @@ function HumanReviewList({
             </tr>
           </thead>
           <tbody>
-            {rows.map(({ task, item }) => (
+            {rows.map(({ task, item, issue }) => (
               <tr
-                key={item.id}
+                key={`${item.id}-${issue.issueKey}`}
                 className="border-t border-[var(--border)] hover:bg-[var(--hover-bg)]"
               >
                 <td className="px-5 py-4 font-medium">{task.name}</td>
@@ -1055,15 +1109,7 @@ function HumanReviewList({
                   {item.name}
                 </td>
                 <td className="px-4 py-4 text-[var(--text-secondary)]">
-                  {item.review.ruleResults
-                    .filter((result) =>
-                      requiresHumanReview({
-                        ...item.review,
-                        ruleResults: [result],
-                      }),
-                    )
-                    .map((result) => result.ruleName)
-                    .join("、") || "需要进一步确认"}
+                  {issue.label}
                 </td>
                 <td className="px-4 py-4">
                   <ResultTag status={item.review.overallStatus} />
