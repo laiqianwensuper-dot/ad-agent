@@ -36,12 +36,16 @@ export function getSeverity(
   evidence: string[],
 ): "HIGH" | "MEDIUM" | "LOW" | null {
   if (status !== "RISK") return null;
+  // A-10 describes insufficient material rather than a confirmed violation.
+  // It may be retained as RISK by an upstream integration, but it must not
+  // receive a triage severity intended for actionable compliance issues.
+  if (ruleId === "A-10") return null;
   if (ruleId === "A-06") return "HIGH";
 
   if (ruleId === "A-05") {
     const text = evidence.join(" ");
     const isStrongEffectClaim =
-      /(?:保证(?:见效|有效|改善)|必然(?:见效|有效|改善)|确保(?:见效|有效|改善)|\d+\s*天.{0,12}(?:见效|改善|提亮|焕亮|淡斑|祛痘)|(?:提升|减少|降低|改善)\s*\d+(?:\.\d+)?\s*%|100\s*%\s*(?:有效|见效))/i.test(
+      /(?:保证|必然|确保).{0,12}(?:见效|有效|改善|提亮|焕亮|淡斑|淡纹|祛痘)|(?:\d+|[一二三四五六七八九十两]+)\s*(?:天|日|周|星期).{0,12}(?:见效|有效|改善|提亮|焕亮|淡斑|淡纹|祛痘)|(?:提升|减少|降低|改善)\s*\d+(?:\.\d+)?\s*%|100\s*%\s*(?:有效|见效)/i.test(
         text,
       );
     return isStrongEffectClaim ? "HIGH" : "MEDIUM";

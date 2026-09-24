@@ -1,0 +1,12 @@
+# Local dependencies, build output and caches are rebuilt by Vercel.
+node_modules/
+.next/
+.npm-cache/
+.tmp/
+artifacts/
+coverage/
+
+# Keep local secrets and transient diagnostics out of deployments.
+.env.local
+*.log
+tsconfig.tsbuildinfo

@@ -9,3 +9,5 @@ coverage/
 artifacts/
 AGENTS.md
 CLAUDE.md
+
+.vercel

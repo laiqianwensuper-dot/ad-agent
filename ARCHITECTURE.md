@@ -24,8 +24,8 @@
 - Suggested default for MVP: `gpt-5.6-terra`
 - Validation: Zod and/or JSON Schema
 - Testing: Vitest/Jest + route/unit tests
-- Persistence: none for V1
-- Batch: browser-side queue, max concurrency 2
+- Persistence: 当前浏览器内持久化；任务元数据使用 localStorage，图片 Blob 使用 IndexedDB
+- Batch: 浏览器端逐项提交，单项状态独立；不以并发换取服务端超时风险
 - Auth: none for V1
 
 不要将模型名散落在代码中。通过环境变量配置：
@@ -129,7 +129,7 @@ Browser Batch Manager
 - 单项状态独立；
 - 一项失败不能 reject 整批；
 - 完成后在前端聚合 Batch Summary；
-- 页面刷新后结果可丢失，V1 接受。
+- 已提交任务与图片可从当前浏览器恢复；尚未提交的编辑草稿不保证恢复。
 
 原因：
 - 降低 serverless 长任务风险；

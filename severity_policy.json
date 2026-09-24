@@ -40,7 +40,7 @@
   "human_review": {
     "A-06": "always when RISK",
     "A-09": "when authenticity or authorization cannot be verified",
-    "A-10": "request better evidence or human review",
+    "A-10": "request better evidence",
     "validator_failure": "always after the single retry also fails"
   }
 }

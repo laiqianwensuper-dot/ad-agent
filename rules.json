@@ -286,7 +286,7 @@
         "must_quote_original_text": false,
         "evidence_must_exist_in_canonical_content": false
       },
-      "human_review_policy": "request_more_evidence_or_human_review"
+      "human_review_policy": "request_more_evidence"
     }
   ]
 }

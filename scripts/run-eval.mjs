@@ -27,7 +27,6 @@ const concurrency = Math.max(
     ).replace("--concurrency=", ""),
   ) || 1,
 );
-
 function expectedRuleIds(value) {
   return value
     .split(",")
@@ -58,7 +57,9 @@ function parseExpectedStatuses(value) {
 function sameRuleStatuses(review, expected) {
   if (!expected) return null;
   return review.ruleResults.every(
-    (result) => expected.get(result.ruleId) === result.status,
+    // The eval manifest lists non-PASS expectations only. Every omitted rule
+    // is expected to PASS, rather than being compared with undefined.
+    (result) => (expected.get(result.ruleId) ?? "PASS") === result.status,
   );
 }
 
@@ -128,7 +129,7 @@ async function evaluate(testCase) {
       expectedRules: expectedRules.join(",") || "-",
       actualRules: actualRules.join(",") || "-",
       overall: review.overallStatus === testCase.expected_overall,
-      rules: sameSet(actualRules, expectedRules),
+      nonPassRuleSet: sameSet(actualRules, expectedRules),
       ruleStatuses: sameRuleStatuses(review, expectedStatuses),
       human: actualHuman === expectedHuman,
       ms: Date.now() - started,
@@ -145,7 +146,7 @@ async function evaluate(testCase) {
         expectedRuleIds(testCase.expected_rule_hits).join(",") || "-",
       actualRules: "-",
       overall: false,
-      rules: false,
+      nonPassRuleSet: false,
       ruleStatuses: null,
       human: false,
       ms: Date.now() - started,
@@ -173,7 +174,7 @@ rows.sort((left, right) => left.id.localeCompare(right.id));
 const summary = {
   cases: rows.length,
   overallMatched: rows.filter((row) => row.overall).length,
-  ruleSetMatched: rows.filter((row) => row.rules).length,
+  nonPassRuleSetMatched: rows.filter((row) => row.nonPassRuleSet).length,
   ruleStatusMatched: rows.filter((row) => row.ruleStatuses === true).length,
   ruleStatusUnspecified: rows.filter((row) => row.ruleStatuses === null).length,
   humanRouteMatched: rows.filter((row) => row.human).length,

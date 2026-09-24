@@ -8,8 +8,6 @@ const absoluteEffect = /(?:100\s*%|百分之百)\s*(?:有效|见效)/i;
 const statisticalSignal = /(?:用户|销量|增长|提升|调研|样本|订单|购买|人数|件)/;
 const numericDataClaim =
   /(?:\d+(?:\.\d+)?\s*%|百分之[一二三四五六七八九十百千万零〇\d]+|\d+(?:万|千)?\s*(?:用户|销量|订单|购买|样本|件|人)|(?:用户|销量|订单|购买|样本|增长|提升)\s*\d+)/;
-const explicitEffectClaim =
-  /(?:改善|提亮|焕亮|淡斑|祛痘|去痘|修护|保湿|水润|细腻|透亮|亮白|焕白)(?:肤色|肌肤|皮肤|暗沉|毛孔|痘痘|屏障|状态)|(?:治疗|治愈|根治).{0,6}(?:痘|病|肌肤|皮肤)?|(?:保证|7\s*天|\d+\s*天).{0,8}(?:见效|改善|焕亮|提亮|淡斑|祛痘)|(?:温和|深层|强效|高效).{0,5}(?:有效|修护|净痘|洁净)/;
 const competitorComparison =
   /(?:竞品|同类|其他品牌|友商|对手|比.{0,8}(?:好|强|优)|领先|优于|胜过)/;
 const promotionSignal =
@@ -52,6 +50,18 @@ function setPass(rule: ModelRuleResult, reason: string) {
   rule.reason = reason;
   rule.suggestion = null;
   rule.missingInformation = [];
+}
+
+function setUncertain(
+  rule: ModelRuleResult,
+  reason: string,
+  missingInformation: string[],
+) {
+  rule.status = "UNCERTAIN";
+  rule.evidence = [];
+  rule.reason = reason;
+  rule.suggestion = "请补充原文件或完整页面后重新审核。";
+  rule.missingInformation = missingInformation;
 }
 
 /**
@@ -122,25 +132,6 @@ export function enforceRulePolicy(
     setPass(
       findRule(result, "A-02"),
       "当前统计数据已同时披露可识别的来源、统计口径或样本，以及时间范围。",
-    );
-  }
-
-  // A product name or an abstract positive word is not itself an A-05 effect
-  // promise. The model still evaluates clear effect claims; this guard only
-  // removes a reported A-05 hit when no defined effect form exists in text.
-  if (!normalized && !explicitEffectClaim.test(text)) {
-    setPass(
-      findRule(result, "A-05"),
-      "当前材料未发现明确的健康、美容、性能或收益效果承诺。",
-    );
-  }
-
-  // A-07 needs an actual competitor or comparative frame. Absolute wording
-  // without one remains an A-01 issue rather than an invented comparison.
-  if (!competitorComparison.test(text)) {
-    setPass(
-      findRule(result, "A-07"),
-      "当前材料未发现竞品贬损或全面优越比较的明确语境。",
     );
   }
 
@@ -234,6 +225,20 @@ export function enforceRulePolicy(
     setPass(
       findRule(result, "A-10"),
       "素材页面完整，未发现影响 A-01 至 A-09 判断的关键内容缺失。",
+    );
+  }
+
+  // A-10 is an evidence-state rule: insufficient material means the system
+  // must abstain and request the original/complete page, not classify it as a
+  // confirmed compliance violation in the modification queue.
+  const a10 = findRule(result, "A-10");
+  if (a10.status === "RISK") {
+    setUncertain(
+      a10,
+      "当前材料存在影响完整审核的证据缺口，不能据此判定完整合规。",
+      a10.missingInformation.length > 0
+        ? a10.missingInformation
+        : ["原文件或完整页面"],
     );
   }
   return result;

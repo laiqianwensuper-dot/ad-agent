@@ -79,7 +79,9 @@ function getClient(): OpenAI {
   return new OpenAI({
     apiKey: process.env.OPENAI_API_KEY,
     baseURL: process.env.OPENAI_BASE_URL || undefined,
-    timeout: 45_000,
+    // One review may include a single validation repair. Keep each model call
+    // bounded so the API route can finish both attempts within its budget.
+    timeout: 35_000,
     maxRetries: 0,
   });
 }

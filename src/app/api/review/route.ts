@@ -10,7 +10,8 @@ import {
 } from "@/lib/upload-policy";
 
 export const runtime = "nodejs";
-export const maxDuration = 60;
+// Image parsing plus one validation repair can require two model calls.
+export const maxDuration = 120;
 
 const MAX_TEXT_LENGTH = 12_000;
 const MAX_IMAGES_PER_TASK = 5;

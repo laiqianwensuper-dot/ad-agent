@@ -166,10 +166,57 @@ describe("review validator", () => {
     ).toBe("UNCERTAIN");
   });
 
+  it("normalizes an A-10 material-defect risk into supplementation uncertainty", () => {
+    const review = passingReview();
+    review.ruleResults[9] = {
+      ...review.ruleResults[9],
+      status: "RISK",
+      reason: "图片文字模糊。",
+      suggestion: "删除图片。",
+      missingInformation: [],
+    };
+    const corrected = enforceRulePolicy(review, canonicalizeText("活动页截图"));
+    expect(corrected.ruleResults[9]).toMatchObject({
+      status: "UNCERTAIN",
+      evidence: [],
+      missingInformation: ["原文件或完整页面"],
+    });
+  });
+
   it("uses deterministic A-05 escalation rather than a fixed high-risk rule", () => {
     expect(getSeverity("A-05", "RISK", ["焕亮肤色"])).toBe("MEDIUM");
     expect(getSeverity("A-05", "RISK", ["7天保证见效"])).toBe("HIGH");
+    expect(getSeverity("A-05", "RISK", ["28天淡纹"])).toBe("HIGH");
+    expect(getSeverity("A-05", "RISK", ["两周改善暗沉"])).toBe("HIGH");
+    expect(getSeverity("A-05", "RISK", ["保证改善暗沉"])).toBe("HIGH");
+    expect(getSeverity("A-05", "RISK", ["提升50%"])).toBe("HIGH");
+    expect(getSeverity("A-05", "RISK", ["100%有效"])).toBe("HIGH");
     expect(getSeverity("A-09", "UNCERTAIN", ["专家推荐"])).toBeNull();
+    expect(getSeverity("A-10", "RISK", ["图片文字模糊"])).toBeNull();
+  });
+
+  it("does not overwrite model-supported A-05 or A-07 risks with a narrow keyword allowlist", () => {
+    const review = passingReview();
+    review.ruleResults[4] = {
+      ...review.ruleResults[4],
+      status: "RISK",
+      evidence: ["抗老紧致"],
+      reason: "这是需要依据支持的美容效果主张。",
+      suggestion: "补充可识别依据或改为非确定性表述。",
+    };
+    review.ruleResults[6] = {
+      ...review.ruleResults[6],
+      status: "RISK",
+      evidence: ["碾压所有品牌"],
+      reason: "这是无法证明的全面优越比较。",
+      suggestion: "删除全面优越比较。",
+    };
+    const corrected = enforceRulePolicy(
+      review,
+      canonicalizeText("抗老紧致，碾压所有品牌。"),
+    );
+    expect(corrected.ruleResults[4].status).toBe("RISK");
+    expect(corrected.ruleResults[6].status).toBe("RISK");
   });
 
   it("treats 100%有效 as absolute/effect claims rather than a statistical A-02 claim", () => {

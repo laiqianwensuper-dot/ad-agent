@@ -244,6 +244,10 @@ function mergeSameEvidenceIssues(rows: IssueRow[]): IssueRow[] {
     existing.suggestion = [existing.suggestion, row.suggestion]
       .filter((item): item is string => Boolean(item))
       .join("；");
+    // A shared evidence row may be both a normal modification and a human
+    // review issue (for example A-05 plus A-06). Preserve the stricter route.
+    existing.human = existing.human || row.human;
+    existing.humanIssueKey ??= row.humanIssueKey;
   }
   return [...merged.values()];
 }
@@ -515,10 +519,17 @@ export function ReviewResultView({
     ...issueRows.filter((row) => row.human),
     ...uncertain.filter(ruleNeedsHumanReview).map(issueFromUncertain),
   ];
+  const pendingHumanRows = ruleHumanRows.filter(
+    (row) =>
+      !row.humanIssueKey ||
+      !humanReview?.issueReviews.some(
+        (item) => item.issueKey === row.humanIssueKey,
+      ),
+  );
   const humanRows =
-    review.needHumanReview && ruleHumanRows.length === 0
+    review.needHumanReview && pendingHumanRows.length === 0 && !humanReview?.issueReviews.length
       ? [fallbackHumanIssue()]
-      : ruleHumanRows;
+      : pendingHumanRows;
   const supplementRows = uncertain
     .filter((result) => !ruleNeedsHumanReview(result))
     .map(issueFromUncertain);
